@@ -1,0 +1,18 @@
+{
+  // Use the CMake + Ninja + ARM GCC that ship with STM32CubeCLT.
+  // These tools are NOT on the system PATH, so we inject them here for
+  // CMake Tools' configure and build steps. The generated toolchain file
+  // (cmake/gcc-arm-none-eabi.cmake) finds "arm-none-eabi-gcc" via PATH.
+  "cmake.cmakePath": "C:/ST/STM32CubeCLT_1.22.0/CMake/bin/cmake.exe",
+  "cmake.useCMakePresets": "always",
+  "cmake.configureEnvironment": {
+    "PATH": "C:\\ST\\STM32CubeCLT_1.22.0\\CMake\\bin;C:\\ST\\STM32CubeCLT_1.22.0\\Ninja\\bin;C:\\ST\\STM32CubeCLT_1.22.0\\GNU-tools-for-STM32\\bin;${env:PATH}"
+  },
+  "cmake.buildEnvironment": {
+    "PATH": "C:\\ST\\STM32CubeCLT_1.22.0\\CMake\\bin;C:\\ST\\STM32CubeCLT_1.22.0\\Ninja\\bin;C:\\ST\\STM32CubeCLT_1.22.0\\GNU-tools-for-STM32\\bin;${env:PATH}"
+  },
+
+  // Point IntelliSense at the compile_commands.json CMake generates
+  // (CMAKE_EXPORT_COMPILE_COMMANDS is already ON in the CubeMX CMakeLists).
+  "C_Cpp.default.compileCommands": "${workspaceFolder}/build/Debug/compile_commands.json"
+}

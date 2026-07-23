@@ -1,0 +1,46 @@
+# Build output (CMake / Ninja)
+build/
+build-*/
+out/
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+CMakeScripts/
+cmake_install.cmake
+install_manifest.txt
+compile_commands.json
+CTestTestfile.cmake
+_deps/
+
+# STM32CubeProgrammer / debug artifacts
+*.map
+*.list
+
+# STM32CubeMX backup/lock files
+*.ioc.bak
+.mxproject.bak
+
+# IDE - VS Code (keep shared config, ignore user-local overrides)
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+.vscode/*.log
+
+# Other common IDEs
+.idea/
+*.iml
+*.uvprojx.bak
+*.uvoptx
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor swap/backup files
+*~
+*.swp
+*.swo

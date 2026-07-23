@@ -1,0 +1,42 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      // Uses the CMake Tools extension, so it inherits the PATH/cmakePath
+      // set in settings.json and builds the currently selected preset.
+      "type": "cmake",
+      "label": "CMake: build",
+      "command": "build",
+      "targets": ["all"],
+      "preset": "${command:cmake.activeBuildPresetName}",
+      "group": "build",
+      "problemMatcher": ["$gcc"]
+    },
+    {
+      // Flashes the already-built Debug ELF via STM32CubeProgrammer CLI and
+      // resets the target so it starts running immediately (no debug session).
+      "type": "shell",
+      "label": "Flash (ST-LINK)",
+      "command": "\"C:/ST/STM32CubeCLT_1.22.0/STM32CubeProgrammer/bin/STM32_Programmer_CLI.exe\"",
+      "args": [
+        "-c", "port=SWD",
+        "-w", "${workspaceFolder}/build/Debug/gan_mppt_firmware.elf",
+        "-v",
+        "-rst"
+      ],
+      "problemMatcher": []
+    },
+    {
+      // Bound to Ctrl+Shift+B via the "isDefault" build task: builds then
+      // flashes, without starting a debug session.
+      "label": "Build & Flash",
+      "dependsOn": ["CMake: build", "Flash (ST-LINK)"],
+      "dependsOrder": "sequence",
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "problemMatcher": []
+    }
+  ]
+}
