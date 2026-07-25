@@ -55,7 +55,7 @@
 /* USER CODE END 0 */
 
 /* External variables --------------------------------------------------------*/
-
+extern HRTIM_HandleTypeDef hhrtim;
 /* USER CODE BEGIN EV */
 
 /* USER CODE END EV */
@@ -197,6 +197,34 @@ void SysTick_Handler(void)
 /* For the available peripheral interrupt handler names,                      */
 /* please refer to the startup file (startup_stm32h7xx.s).                    */
 /******************************************************************************/
+
+/**
+  * @brief This function handles EXTI line[15:10] interrupts.
+  */
+void EXTI15_10_IRQHandler(void)
+{
+  /* USER CODE BEGIN EXTI15_10_IRQn 0 */
+
+  /* USER CODE END EXTI15_10_IRQn 0 */
+  HAL_GPIO_EXTI_IRQHandler(OVP_Pin);
+  /* USER CODE BEGIN EXTI15_10_IRQn 1 */
+
+  /* USER CODE END EXTI15_10_IRQn 1 */
+}
+
+/**
+  * @brief This function handles HRTIM fault global interrupt.
+  */
+void HRTIM1_FLT_IRQHandler(void)
+{
+  /* USER CODE BEGIN HRTIM1_FLT_IRQn 0 */
+
+  /* USER CODE END HRTIM1_FLT_IRQn 0 */
+  HAL_HRTIM_IRQHandler(&hhrtim,HRTIM_TIMERINDEX_COMMON);
+  /* USER CODE BEGIN HRTIM1_FLT_IRQn 1 */
+
+  /* USER CODE END HRTIM1_FLT_IRQn 1 */
+}
 
 /* USER CODE BEGIN 1 */
 

@@ -33,6 +33,15 @@ typedef enum
 #define TIMER_CONTROL_DEFAULT_DUTY_CYCLE   500U    /* 50.0% */
 #define TIMER_CONTROL_DEFAULT_DEAD_TIME_NS 20U     /* 20 ns */
 
+/* Hard limits - every value passed into this module is clamped to these
+ * ranges before it reaches the hardware. */
+#define TIMER_CONTROL_MIN_FREQUENCY_HZ 100000U /* 100 kHz */
+#define TIMER_CONTROL_MAX_FREQUENCY_HZ 800000U /* 800 kHz */
+#define TIMER_CONTROL_MIN_DUTY_CYCLE   0U      /* 0.0% */
+#define TIMER_CONTROL_MAX_DUTY_CYCLE   1000U   /* 100.0% */
+#define TIMER_CONTROL_MIN_DEAD_TIME_NS 5U      /* 5 ns */
+#define TIMER_CONTROL_MAX_DEAD_TIME_NS 300U    /* 300 ns */
+
 /* Caller-owned state for one HRTIM half-bridge channel. Set number/frequency/
  * duty_cycle/dead_time before calling channel_timer_init(); every
  * set_timer_*()/start_timer()/stop_timer() call below updates the matching
@@ -57,6 +66,19 @@ extern timer_channel_t channel_b;
 extern timer_channel_t channel_c;
 extern timer_channel_t channel_d;
 extern timer_channel_t channel_e;
+
+/* Set by the global OVP fault (OVP pin, EXTI10) after it latches every
+ * channel off. Clear in application code before restarting any channel. */
+extern volatile bool timer_global_fault_latched;
+
+/* Latches every channel off (outputs disabled, counters stopped) and sets
+ * timer_global_fault_latched. Called from the OVP interrupt via
+ * interrupts.c; safe in ISR context. */
+void timer_control_global_fault(void);
+
+/* Marks a channel inactive after its OCP fault (FLT1-5) tripped in
+ * hardware. Called from the HRTIM fault interrupt via interrupts.c. */
+void timer_control_channel_fault(timer_channel_id_t channel);
 
 /* Configures the channel per its number/frequency/duty_cycle/dead_time
  * fields but does not start it - call start_timer() to enable the counter
