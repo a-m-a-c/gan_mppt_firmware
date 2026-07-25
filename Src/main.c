@@ -24,7 +24,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include "timer_control.h"
+#include "pwm.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -97,16 +97,16 @@ int main(void)
   /* USER CODE BEGIN 2 */
 
   // Setup HRTIM for channel control.
-  channel_timer_init(&channel_a);
-  channel_timer_init(&channel_b);
-  channel_timer_init(&channel_c);
-  channel_timer_init(&channel_d);
-  channel_timer_init(&channel_e);
-  start_timer(&channel_a);
-  start_timer(&channel_b);
-  start_timer(&channel_c);
-  start_timer(&channel_d);
-  start_timer(&channel_e);
+  pwm_init(&channel_a);
+  pwm_init(&channel_b);
+  pwm_init(&channel_c);
+  pwm_init(&channel_d);
+  pwm_init(&channel_e);
+  pwm_start(&channel_a);
+  pwm_start(&channel_b);
+  pwm_start(&channel_c);
+  pwm_start(&channel_d);
+  pwm_start(&channel_e);
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -117,9 +117,9 @@ int main(void)
 
     /* USER CODE BEGIN 3 */
     // EXAMPLE usage
-    set_timer_duty_cycle(&channel_a, 100U);
+    pwm_set_duty_cycle(&channel_a, 100U);
     HAL_Delay(1000);
-    set_timer_duty_cycle(&channel_a, 900U);
+    pwm_set_duty_cycle(&channel_a, 900U);
     HAL_Delay(1000);
   }
   /* USER CODE END 3 */
