@@ -24,6 +24,7 @@ set(MX_Application_Src
     ${CMAKE_CURRENT_SOURCE_DIR}/../../Src/gpio.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../Src/fdcan.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../Src/hrtim.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Src/i2c.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../Src/stm32h7xx_it.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../Src/stm32h7xx_hal_msp.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../Src/sysmem.c

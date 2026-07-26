@@ -20,11 +20,13 @@
 #include "main.h"
 #include "fdcan.h"
 #include "hrtim.h"
+#include "i2c.h"
 #include "gpio.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "pwm.h"
+#include "channel_telem.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -91,22 +93,24 @@ int main(void)
   /* USER CODE END SysInit */
 
   /* Initialize all configured peripherals */
+  MX_HRTIM_Init();
   MX_GPIO_Init();
   MX_FDCAN1_Init();
-  MX_HRTIM_Init();
+  MX_I2C1_Init();
   /* USER CODE BEGIN 2 */
 
-  // Setup HRTIM for channel control.
+  // Channel A at 30% duty, channel B at 50%.
   pwm_init(&channel_a);
-  pwm_init(&channel_b);
-  pwm_init(&channel_c);
-  pwm_init(&channel_d);
-  pwm_init(&channel_e);
+  pwm_set_duty_cycle(&channel_a, 300U);
   pwm_start(&channel_a);
-  pwm_start(&channel_b);
-  pwm_start(&channel_c);
-  pwm_start(&channel_d);
-  pwm_start(&channel_e);
+
+  // Bring up telemetry. Soft-fails per channel if no sensor answers, so an
+  // unpopulated I2C bus leaves the converter running untouched.
+  telem_init(&telem_a);
+  telem_init(&telem_b);
+  telem_init(&telem_c);
+  telem_init(&telem_d);
+  telem_init(&telem_e);
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -116,11 +120,46 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-    // EXAMPLE usage
-    pwm_set_duty_cycle(&channel_a, 100U);
-    HAL_Delay(1000);
-    pwm_set_duty_cycle(&channel_a, 900U);
-    HAL_Delay(1000);
+    telem_update(&telem_a);
+    telem_update(&telem_b);
+    telem_update(&telem_c);
+    telem_update(&telem_d);
+    telem_update(&telem_e);
+
+    /* Sweep each parameter min->max over 5 s (100 steps x 50 ms), one at a
+       time, restoring its default before moving to the next. */
+    for (uint32_t i = 0U; i <= 100U; i++)
+    {
+      uint32_t frequency = PWM_MIN_FREQUENCY_HZ +
+                           (((PWM_MAX_FREQUENCY_HZ - PWM_MIN_FREQUENCY_HZ) * i) / 100U);
+      pwm_set_frequency(&channel_a, frequency);
+      pwm_set_frequency(&channel_b, frequency);
+      HAL_Delay(50);
+    }
+    pwm_set_frequency(&channel_a, PWM_DEFAULT_FREQUENCY_HZ);
+    pwm_set_frequency(&channel_b, PWM_DEFAULT_FREQUENCY_HZ);
+
+    for (uint32_t i = 0U; i <= 100U; i++)
+    {
+      uint16_t duty = (uint16_t)(PWM_MIN_DUTY_CYCLE +
+                                 (((PWM_MAX_DUTY_CYCLE - PWM_MIN_DUTY_CYCLE) * i) / 100U));
+      pwm_set_duty_cycle(&channel_a, duty);
+      pwm_set_duty_cycle(&channel_b, duty);
+      HAL_Delay(50);
+    }
+    pwm_set_duty_cycle(&channel_a, 300U);
+    pwm_set_duty_cycle(&channel_b, 500U);
+
+    for (uint32_t i = 0U; i <= 100U; i++)
+    {
+      uint16_t dead_time = (uint16_t)(PWM_MIN_DEAD_TIME_NS +
+                                      (((PWM_MAX_DEAD_TIME_NS - PWM_MIN_DEAD_TIME_NS) * i) / 100U));
+      pwm_set_dead_time(&channel_a, dead_time);
+      pwm_set_dead_time(&channel_b, dead_time);
+      HAL_Delay(50);
+    }
+    pwm_set_dead_time(&channel_a, PWM_DEFAULT_DEAD_TIME_NS);
+    pwm_set_dead_time(&channel_b, PWM_DEFAULT_DEAD_TIME_NS);
   }
   /* USER CODE END 3 */
 }
@@ -140,27 +179,25 @@ void SystemClock_Config(void)
 
   /** Configure the main internal regulator output voltage
   */
-  __HAL_PWR_VOLTAGESCALING_CONFIG(PWR_REGULATOR_VOLTAGE_SCALE3);
+  __HAL_PWR_VOLTAGESCALING_CONFIG(PWR_REGULATOR_VOLTAGE_SCALE0);
 
   while(!__HAL_PWR_GET_FLAG(PWR_FLAG_VOSRDY)) {}
 
   /** Initializes the RCC Oscillators according to the specified parameters
   * in the RCC_OscInitTypeDef structure.
   */
-  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI|RCC_OSCILLATORTYPE_HSE;
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSE;
   RCC_OscInitStruct.HSEState = RCC_HSE_ON;
-  RCC_OscInitStruct.HSIState = RCC_HSI_DIV1;
-  RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
   RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
   RCC_OscInitStruct.PLL.PLLM = 1;
-  RCC_OscInitStruct.PLL.PLLN = 18;
+  RCC_OscInitStruct.PLL.PLLN = 120;
   RCC_OscInitStruct.PLL.PLLP = 2;
-  RCC_OscInitStruct.PLL.PLLQ = 3;
+  RCC_OscInitStruct.PLL.PLLQ = 8;
   RCC_OscInitStruct.PLL.PLLR = 2;
   RCC_OscInitStruct.PLL.PLLRGE = RCC_PLL1VCIRANGE_3;
-  RCC_OscInitStruct.PLL.PLLVCOSEL = RCC_PLL1VCOMEDIUM;
-  RCC_OscInitStruct.PLL.PLLFRACN = 6144;
+  RCC_OscInitStruct.PLL.PLLVCOSEL = RCC_PLL1VCOWIDE;
+  RCC_OscInitStruct.PLL.PLLFRACN = 0;
   if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
   {
     Error_Handler();
@@ -171,9 +208,9 @@ void SystemClock_Config(void)
   RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
                               |RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2
                               |RCC_CLOCKTYPE_D3PCLK1|RCC_CLOCKTYPE_D1PCLK1;
-  RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_HSI;
+  RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
   RCC_ClkInitStruct.SYSCLKDivider = RCC_SYSCLK_DIV1;
-  RCC_ClkInitStruct.AHBCLKDivider = RCC_HCLK_DIV1;
+  RCC_ClkInitStruct.AHBCLKDivider = RCC_HCLK_DIV4;
   RCC_ClkInitStruct.APB3CLKDivider = RCC_APB3_DIV1;
   RCC_ClkInitStruct.APB1CLKDivider = RCC_APB1_DIV1;
   RCC_ClkInitStruct.APB2CLKDivider = RCC_APB2_DIV1;

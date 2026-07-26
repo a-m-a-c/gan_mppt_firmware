@@ -45,13 +45,17 @@ target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
 # Add sources to executable
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user sources here
-    Src/app/pwm.c
-    Src/app/interrupts.c
+    Src/drivers/pwm.c
+    Src/drivers/interrupts.c
+    Src/drivers/ina228.c
+    Src/drivers/channel_telem.c
+    Src/app/mppt.c
 )
 
 # Add include paths
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user defined include paths
+    Inc/drivers
     Inc/app
 )
 
