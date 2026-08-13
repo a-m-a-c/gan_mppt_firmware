@@ -46,6 +46,8 @@ target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user sources here
     Src/drivers/pwm.c
+    Src/drivers/led.c
+    Src/drivers/serial.c
     Src/drivers/interrupts.c
     Src/drivers/ina228.c
     Src/drivers/channel_telem.c

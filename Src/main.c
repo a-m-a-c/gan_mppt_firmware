@@ -29,6 +29,8 @@
 /* USER CODE BEGIN Includes */
 #include "pwm.h"
 #include "channel_telem.h"
+#include "led.h"
+#include "serial.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -62,6 +64,20 @@ static void MPU_Config(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+
+/* HAL_Delay() replacement that keeps the periodic services running while it
+   waits. The parameter sweeps below block for ~15 s per pass, which would
+   otherwise starve both the LED cadence and the telemetry stream. */
+static void app_delay_ms(uint32_t ms)
+{
+  uint32_t start = HAL_GetTick();
+
+  while ((HAL_GetTick() - start) < ms)
+  {
+    led_toggle_service();
+    serial_service();
+  }
+}
 
 /* USER CODE END 0 */
 
@@ -123,6 +139,9 @@ int main(void)
   telem_init(&telem_c);
   telem_init(&telem_d);
   telem_init(&telem_e);
+
+  led_init();
+  serial_init();
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -132,6 +151,9 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+    led_toggle_service();
+    serial_service();
+
     telem_update(&telem_a);
     telem_update(&telem_b);
     telem_update(&telem_c);
@@ -146,7 +168,7 @@ int main(void)
                            (((PWM_MAX_FREQUENCY_HZ - PWM_MIN_FREQUENCY_HZ) * i) / 100U);
       pwm_set_frequency(&channel_a, frequency);
       pwm_set_frequency(&channel_b, frequency);
-      HAL_Delay(50);
+      app_delay_ms(50);
     }
     pwm_set_frequency(&channel_a, PWM_DEFAULT_FREQUENCY_HZ);
     pwm_set_frequency(&channel_b, PWM_DEFAULT_FREQUENCY_HZ);
@@ -157,7 +179,7 @@ int main(void)
                                  (((PWM_MAX_DUTY_CYCLE - PWM_MIN_DUTY_CYCLE) * i) / 100U));
       pwm_set_duty_cycle(&channel_a, duty);
       pwm_set_duty_cycle(&channel_b, duty);
-      HAL_Delay(50);
+      app_delay_ms(50);
     }
     pwm_set_duty_cycle(&channel_a, 300U);
     pwm_set_duty_cycle(&channel_b, 500U);
@@ -168,7 +190,7 @@ int main(void)
                                       (((PWM_MAX_DEAD_TIME_NS - PWM_MIN_DEAD_TIME_NS) * i) / 100U));
       pwm_set_dead_time(&channel_a, dead_time);
       pwm_set_dead_time(&channel_b, dead_time);
-      HAL_Delay(50);
+      app_delay_ms(50);
     }
     pwm_set_dead_time(&channel_a, PWM_DEFAULT_DEAD_TIME_NS);
     pwm_set_dead_time(&channel_b, PWM_DEFAULT_DEAD_TIME_NS);
