@@ -48,9 +48,13 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Src/drivers/pwm.c
     Src/drivers/led.c
     Src/drivers/serial.c
+    Src/drivers/vbus.c
     Src/drivers/interrupts.c
     Src/drivers/ina228.c
     Src/drivers/channel_telem.c
+    Src/app/app.c
+    Src/app/command.c
+    Src/app/control.c
     Src/app/mppt.c
 )
 

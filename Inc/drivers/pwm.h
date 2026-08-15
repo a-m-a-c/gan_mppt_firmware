@@ -18,6 +18,8 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "config.h"
+
 typedef enum
 {
   PWM_CHANNEL_A = 0,
@@ -38,19 +40,9 @@ typedef enum
   PWM_STATE_FAULTED
 } pwm_state_t;
 
-#define PWM_DEFAULT_FREQUENCY_HZ 500000U /* 500 kHz */
-#define PWM_DEFAULT_DUTY_CYCLE   500U    /* 50.0% */
-#define PWM_DEFAULT_DEAD_TIME_NS 20U     /* 20 ns */
-
+/* Duty cycles are carried in tenths of a percent, so 1000 is 100%. A unit,
+ * not a setting - the tunable defaults and limits live in config.h. */
 #define PWM_DUTY_SCALE 1000U
-
-
-#define PWM_MIN_FREQUENCY_HZ 100000U /* 100 kHz */
-#define PWM_MAX_FREQUENCY_HZ 800000U /* 800 kHz */
-#define PWM_MIN_DUTY_CYCLE   100U    /* 10.0% */
-#define PWM_MAX_DUTY_CYCLE   900U    /* 90.0% */
-#define PWM_MIN_DEAD_TIME_NS 5U      /* 5 ns */
-#define PWM_MAX_DEAD_TIME_NS 300U    /* 300 ns */
 
 typedef struct
 {
@@ -75,6 +67,9 @@ extern volatile bool pwm_OVP_fault_latched;
 
 void pwm_OVP_fault(void);
 void pwm_OCP_fault(pwm_channel_id_t channel);
+/* The channel object for an id, or NULL if the id is out of range. For code
+ * that works by index (the host command parser) rather than by name. */
+pwm_channel_t *pwm_channel(pwm_channel_id_t id);
 /* Effective state: FAULTED if an OCP or the global OVP fault is latched,
  * otherwise the channel's operational sub-state. */
 pwm_state_t pwm_get_state(const pwm_channel_t *channel);

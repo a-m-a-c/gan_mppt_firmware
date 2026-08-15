@@ -2,7 +2,7 @@
   ******************************************************************************
   * @file    led.h
   * @author  Angus Macdonald
-  * @brief   Toggle LED heartbeat (LED_TOG_1..5 plus the three status LEDs).
+  * @brief   Status LEDs driven from system state.
   ******************************************************************************
   * @attention
   *
@@ -17,24 +17,24 @@
 
 #include <stdint.h>
 
-/* Full on/off cycle. The lines sit high for half of this and low for the
- * other half, so the visible blink rate is 0.5 Hz. */
-#define LED_TOGGLE_PERIOD_MS 2000U
+#include "config.h"
 
-/* Drives all eight lines low and starts the cadence. Call once from main().
- * Covers LED_TOG_1..5 plus LED_ACTIVE, LED_ERR and LED_OUT_CONN; the latter
- * three are flashed for bring-up and should be handed back to real status
- * logic once that exists. */
+/* Every line reflects state - nothing blinks any more:
+ *
+ *   LED_TOG_1..5   the matching PWM channel is RUNNING
+ *   LED_ACTIVE     any channel is RUNNING
+ *   LED_ERR        any OCP is latched, or the global OVP is
+ *   LED_OUT_CONN   the bus is above LED_BUS_ON_MV (a battery is connected)
+ *
+ * Thresholds and drive polarity are in config.h. */
+
+/* Drives every line to match the current state. Call once from main(). The
+ * bus LED stays dark until the first telemetry sample lands, a cycle later. */
 void led_init(void);
 
-/* Non-blocking: toggles the lines when half a period has elapsed, otherwise
- * returns immediately. Must be called often enough that the caller does not
- * starve it - see led_delay_ms(). */
-void led_toggle_service(void);
-
-/* HAL_Delay() replacement that keeps the heartbeat running while it waits.
- * Use in place of HAL_Delay() anywhere in the main loop, otherwise the
- * blocking wait stalls the toggle. */
-void led_delay_ms(uint32_t ms);
+/* Non-blocking: refreshes all eight lines from system state and returns.
+ * Cheap enough to call every pass of the main loop, which is what keeps a
+ * fault visible the instant it latches. */
+void led_service(void);
 
 #endif /* LED_H */

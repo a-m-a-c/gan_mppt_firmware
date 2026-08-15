@@ -17,9 +17,11 @@
 
 #define INA228_CONFIG_RST 0x8000U
 
-/* MODE=0xF (continuous shunt+bus+temp), 1052 us conversions on all three,
- * 16-sample averaging -> a full averaged set every ~50 ms. */
-#define INA228_ADC_CONFIG_VALUE 0xFB6AU
+/* MODE=0xB (continuous shunt+bus, temperature disabled), 1052 us conversions,
+ * 16-sample averaging -> a full averaged set every ~34 ms. Dropping the
+ * temperature conversion shortens the cycle from ~50 ms and is why
+ * ina228_read_die_temp() is not usable with this configuration. */
+#define INA228_ADC_CONFIG_VALUE 0xBB6AU
 
 #define INA228_I2C_TIMEOUT_MS 10U
 
@@ -55,6 +57,17 @@ static bool read_reg16(ina228_t *dev, uint8_t reg, uint16_t *value)
 }
 
 /* VSHUNT/VBUS/CURRENT: a signed 20-bit value left-justified in 24 bits. */
+static int32_t decode_reg20(const uint8_t *data)
+{
+  uint32_t raw = (((uint32_t)data[0] << 16) | ((uint32_t)data[1] << 8) | data[2]) >> 4;
+
+  if ((raw & 0x80000U) != 0U)
+  {
+    raw |= 0xFFF00000U; /* sign-extend 20 -> 32 bits */
+  }
+  return (int32_t)raw;
+}
+
 static bool read_reg20(ina228_t *dev, uint8_t reg, int32_t *value)
 {
   uint8_t data[3];
@@ -62,13 +75,33 @@ static bool read_reg20(ina228_t *dev, uint8_t reg, int32_t *value)
   {
     return false;
   }
-  uint32_t raw = (((uint32_t)data[0] << 16) | ((uint32_t)data[1] << 8) | data[2]) >> 4;
-  if ((raw & 0x80000U) != 0U)
-  {
-    raw |= 0xFFF00000U; /* sign-extend 20 -> 32 bits */
-  }
-  *value = (int32_t)raw;
+  *value = decode_reg20(data);
   return true;
+}
+
+uint8_t ina228_register(ina228_quantity_t quantity)
+{
+  return (quantity == INA228_QTY_CURRENT) ? INA228_REG_CURRENT : INA228_REG_VBUS;
+}
+
+uint16_t ina228_register_size(ina228_quantity_t quantity)
+{
+  (void)quantity; /* both are 20-bit values in 3 bytes */
+  return 3U;
+}
+
+float ina228_decode(const ina228_t *dev, ina228_quantity_t quantity, const uint8_t *raw)
+{
+  int32_t value;
+
+  if ((dev == NULL) || (raw == NULL))
+  {
+    return 0.0f;
+  }
+
+  value = decode_reg20(raw);
+  return (quantity == INA228_QTY_CURRENT) ? ((float)value * dev->current_lsb)
+                                          : ((float)value * INA228_VBUS_LSB_V);
 }
 
 /* POWER: a full unsigned 24-bit value (no 4-bit pad). */
@@ -166,6 +199,9 @@ bool ina228_read_power(ina228_t *dev, float *watts)
   return true;
 }
 
+/* Only meaningful if ADC_CONFIG selects a MODE that converts temperature.
+   INA228_ADC_CONFIG_VALUE deliberately does not, so this returns a stale
+   register unless that changes. */
 bool ina228_read_die_temp(ina228_t *dev, float *celsius)
 {
   uint16_t raw;

@@ -2,7 +2,7 @@
   ******************************************************************************
   * @file    serial.c
   * @author  Angus Macdonald
-  * @brief   Telemetry streaming over UART5 (onboard UART-to-USB).
+  * @brief   UART5 transport (onboard UART-to-USB). Bytes only, no protocol.
   ******************************************************************************
   * @attention
   *
@@ -14,109 +14,244 @@
   */
 #include "serial.h"
 
-#include <stdio.h>
-
-#include "adc.h"
 #include "main.h"
 #include "usart.h"
 
-/* ADC1 runs 16-bit single-ended off a 3V3 reference. */
-#define SERIAL_ADC_FULL_SCALE 65535U
-#define SERIAL_ADC_VREF_MV    3300U
+/* Longest line this module will assemble. Anything longer is reported as
+   SERIAL_LINE_OVERFLOW rather than silently cut in half and passed on. */
+#define SERIAL_LINE_MAX 96
 
-/* Bounded so a stalled peripheral costs one late line, never a hung loop. */
-#define SERIAL_ADC_TIMEOUT_MS 2U
-#define SERIAL_TX_TIMEOUT_MS  10U
+/* UART5 preempts nothing that matters and must never delay the OVP/OCP fault
+   vectors, which run at priority 0. */
+#define SERIAL_IRQ_PRIORITY 5U
 
-static uint32_t serial_last_tx_ms;
+/* Both rings are single-producer / single-consumer, which is what lets them go
+   without a lock: for RX the ISR only advances head and the loop only advances
+   tail, and for TX it is the other way round. A 32-bit aligned load or store is
+   atomic on Cortex-M7, so each side always sees a whole index - a stale one
+   only ever understates how much is available, which is the safe direction.
+   Always read an index once into a local; re-reading mid-expression can give
+   two different answers. */
+static volatile uint8_t serial_rx_ring[SERIAL_RX_RING_LEN];
+static volatile uint32_t serial_rx_head; /* ISR writes, loop reads */
+static volatile uint32_t serial_rx_tail; /* loop writes, ISR reads */
 
-/* MX_ADC1_Init() leaves rank 1 on ADC_CHANNEL_6 (NTC_CH1). Nothing else drives
-   ADC1 yet, so claim rank 1 for V_BUS_DIV rather than touching generated code.
-   Revisit when the NTC channels need sampling too. */
-static void serial_adc_select_vbus(void)
+static volatile uint8_t serial_tx_ring[SERIAL_TX_RING_LEN];
+static volatile uint32_t serial_tx_head; /* loop writes, ISR reads */
+static volatile uint32_t serial_tx_tail; /* ISR writes, loop reads */
+
+/* Lines refused because the ring was too full to take them whole. */
+static uint32_t serial_tx_dropped_lines;
+
+/* Line under assembly, carried across calls until a terminator arrives. */
+static char serial_line[SERIAL_LINE_MAX];
+static size_t serial_line_length;
+static bool serial_line_too_long;
+
+/* Set by the ISR when a byte could not be kept, cleared when the line it
+   belonged to is handed over. That line has a hole in it and is rejected.
+   Setting it just after the consumer clears it costs one spuriously rejected
+   line, which is why the host retries rather than assumes. */
+static volatile bool serial_rx_lost;
+
+size_t serial_tx_free(void)
 {
-  ADC_ChannelConfTypeDef config = {0};
+  uint32_t head = serial_tx_head;
+  uint32_t tail = serial_tx_tail;
 
-  config.Channel = ADC_CHANNEL_3;
-  config.Rank = ADC_REGULAR_RANK_1;
-  config.SamplingTime = ADC_SAMPLETIME_64CYCLES_5;
-  config.SingleDiff = ADC_SINGLE_ENDED;
-  config.OffsetNumber = ADC_OFFSET_NONE;
-  config.Offset = 0;
-  config.OffsetSignedSaturation = DISABLE;
-
-  if (HAL_ADC_ConfigChannel(&hadc1, &config) != HAL_OK)
-  {
-    Error_Handler();
-  }
+  /* One slot is always left empty so head == tail means empty, never full. */
+  return (size_t)((tail - head - 1U) & (SERIAL_TX_RING_LEN - 1U));
 }
 
-static uint16_t serial_read_vbus_raw(void)
+uint32_t serial_tx_dropped(void)
 {
-  uint16_t raw = 0U;
+  return serial_tx_dropped_lines;
+}
 
-  if (HAL_ADC_Start(&hadc1) == HAL_OK)
+bool serial_write(const void *data, size_t length)
+{
+  const uint8_t *bytes = (const uint8_t *)data;
+  uint32_t head;
+
+  if (length == 0U)
   {
-    if (HAL_ADC_PollForConversion(&hadc1, SERIAL_ADC_TIMEOUT_MS) == HAL_OK)
+    return true;
+  }
+  if (length > serial_tx_free())
+  {
+    serial_tx_dropped_lines++;
+    return false;
+  }
+
+  head = serial_tx_head;
+  for (size_t i = 0U; i < length; i++)
+  {
+    serial_tx_ring[head] = bytes[i];
+    head = (head + 1U) & (SERIAL_TX_RING_LEN - 1U);
+  }
+
+  /* Publish the data before the index, and the index before the interrupt is
+     enabled. The other order lets the ISR see an empty ring, switch TXEIE off,
+     and have this enable undone - the line would then sit in the ring until
+     something else happened to queue more. Re-enabling an already-enabled
+     TXEIE is harmless, so erring this way costs nothing. */
+  __DMB();
+  serial_tx_head = head;
+  __DMB();
+  SET_BIT(huart5.Instance->CR1, USART_CR1_TXEIE_TXFNFIE);
+
+  return true;
+}
+
+static bool serial_rx_pop(uint8_t *byte)
+{
+  uint32_t tail = serial_rx_tail;
+
+  if (tail == serial_rx_head)
+  {
+    return false;
+  }
+
+  *byte = serial_rx_ring[tail];
+  serial_rx_tail = (tail + 1U) & (SERIAL_RX_RING_LEN - 1U);
+
+  return true;
+}
+
+serial_line_t serial_read_line(char *out, size_t size)
+{
+  uint8_t byte;
+
+  if ((out == NULL) || (size == 0U))
+  {
+    return SERIAL_LINE_NONE;
+  }
+
+  while (serial_rx_pop(&byte))
+  {
+    if ((byte != '\r') && (byte != '\n'))
     {
-      raw = (uint16_t)HAL_ADC_GetValue(&hadc1);
+      if (serial_line_length < (sizeof(serial_line) - 1U))
+      {
+        serial_line[serial_line_length] = (char)byte;
+        serial_line_length++;
+      }
+      else
+      {
+        serial_line_too_long = true;
+      }
+      continue;
+    }
+
+    /* A terminator closes the line. CRLF produces one line and then an empty
+       one, which reports NONE and costs nothing. */
+    serial_line_t result = SERIAL_LINE_NONE;
+    if (serial_rx_lost)
+    {
+      result = SERIAL_LINE_LOST;
+    }
+    else if (serial_line_too_long)
+    {
+      result = SERIAL_LINE_OVERFLOW;
+    }
+    else if (serial_line_length > 0U)
+    {
+      size_t copy = serial_line_length;
+      if (copy > (size - 1U))
+      {
+        copy = size - 1U;
+        result = SERIAL_LINE_OVERFLOW;
+      }
+      else
+      {
+        result = SERIAL_LINE_OK;
+      }
+      for (size_t i = 0U; i < copy; i++)
+      {
+        out[i] = serial_line[i];
+      }
+      out[copy] = '\0';
+    }
+
+    serial_line_length = 0U;
+    serial_line_too_long = false;
+    serial_rx_lost = false;
+
+    if (result != SERIAL_LINE_NONE)
+    {
+      return result;
     }
   }
-  (void)HAL_ADC_Stop(&hadc1);
 
-  return raw;
+  return SERIAL_LINE_NONE;
 }
 
-/* Bus millivolts, undoing the divider. Done in one 64-bit expression so the
-   intermediate pin voltage is not truncated to whole millivolts first. */
-static uint32_t serial_vbus_mv(uint16_t raw)
-{
-  uint64_t numerator = (uint64_t)raw * SERIAL_ADC_VREF_MV *
-                       (SERIAL_VBUS_DIV_TOP_OHMS + SERIAL_VBUS_DIV_BOTTOM_OHMS);
-  uint64_t denominator = (uint64_t)SERIAL_ADC_FULL_SCALE * SERIAL_VBUS_DIV_BOTTOM_OHMS;
+/* ISR context, both directions. Registers rather than HAL throughout: the HAL
+   IT paths drive the handle's own state machine and take __HAL_LOCK, so RX and
+   TX could not share one handle. Here each half just moves a byte.
+   serial.c owns UART5 at the register level - never call HAL_UART_* on huart5.
 
-  return (uint32_t)(numerator / denominator);
+   UART5 FIFO mode is disabled (usart.c), so TXE/RXNE each mean exactly one
+   slot. Re-enabling the FIFO would require both halves to loop while their
+   flag stays set. */
+void serial_irq(void)
+{
+  USART_TypeDef *uart = huart5.Instance;
+  uint32_t status = uart->ISR;
+
+  /* Gate on TXEIE, not on the TXE flag alone: TXE is set whenever the data
+     register is empty, which is nearly always, so testing the flag by itself
+     would send every *receive* interrupt down this path too - and with an
+     empty ring it would keep re-entering forever. */
+  if (((uart->CR1 & USART_CR1_TXEIE_TXFNFIE) != 0U) &&
+      ((status & USART_ISR_TXE_TXFNF) != 0U))
+  {
+    uint32_t tail = serial_tx_tail;
+
+    if (tail == serial_tx_head)
+    {
+      CLEAR_BIT(uart->CR1, USART_CR1_TXEIE_TXFNFIE);
+    }
+    else
+    {
+      uart->TDR = serial_tx_ring[tail];
+      serial_tx_tail = (tail + 1U) & (SERIAL_TX_RING_LEN - 1U);
+    }
+  }
+
+  /* Overrun latches RXNE off for good, so clear it first: losing one byte
+     must not take the whole command path down with it. The half-received
+     line is then discarded, since a byte is missing from the middle of it. */
+  if ((status & USART_ISR_ORE) != 0U)
+  {
+    uart->ICR = USART_ICR_ORECF;
+    serial_rx_lost = true;
+  }
+
+  if ((status & USART_ISR_RXNE_RXFNE) != 0U)
+  {
+    uint8_t byte = (uint8_t)uart->RDR;
+    uint32_t next = (serial_rx_head + 1U) & (SERIAL_RX_RING_LEN - 1U);
+
+    /* Full ring: drop the byte. Same outcome as an overrun - the line it
+       belonged to is corrupt and is rejected when its terminator arrives. */
+    if (next != serial_rx_tail)
+    {
+      serial_rx_ring[serial_rx_head] = byte;
+      serial_rx_head = next;
+    }
+    else
+    {
+      serial_rx_lost = true;
+    }
+  }
 }
 
 void serial_init(void)
 {
-  /* Offset calibration needs the ADC disabled, so it must precede any start. */
-  if (HAL_ADCEx_Calibration_Start(&hadc1, ADC_CALIB_OFFSET, ADC_SINGLE_ENDED) != HAL_OK)
-  {
-    Error_Handler();
-  }
-
-  serial_adc_select_vbus();
-
-  serial_last_tx_ms = HAL_GetTick();
-}
-
-void serial_service(void)
-{
-  uint32_t now = HAL_GetTick();
-  char line[32];
-  int len;
-
-  /* Unsigned subtraction, so this stays correct across the 32-bit tick
-     wrap at ~49.7 days. */
-  if ((now - serial_last_tx_ms) < SERIAL_TELEM_PERIOD_MS)
-  {
-    return;
-  }
-  serial_last_tx_ms = now;
-
-  uint16_t raw = serial_read_vbus_raw();
-
-  /* "<tick_ms>,<raw>,<vbus_mv>" - integer only, so no float formatting is
-     linked in. The Python side scales to volts. */
-  len = snprintf(line, sizeof(line), "%lu,%u,%lu\r\n",
-                 (unsigned long)now,
-                 (unsigned)raw,
-                 (unsigned long)serial_vbus_mv(raw));
-
-  if (len > 0)
-  {
-    (void)HAL_UART_Transmit(&huart5, (const uint8_t *)line, (uint16_t)len,
-                            SERIAL_TX_TIMEOUT_MS);
-  }
+  /* Enable receive interrupts last, so the rings and the line buffer are
+     already in a valid state before the first byte can arrive. */
+  __HAL_UART_ENABLE_IT(&huart5, UART_IT_RXNE);
+  HAL_NVIC_SetPriority(UART5_IRQn, SERIAL_IRQ_PRIORITY, 0U);
+  HAL_NVIC_EnableIRQ(UART5_IRQn);
 }

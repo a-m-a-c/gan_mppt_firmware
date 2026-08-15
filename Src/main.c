@@ -27,10 +27,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include "pwm.h"
-#include "channel_telem.h"
-#include "led.h"
-#include "serial.h"
+#include "app.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -65,19 +62,7 @@ static void MPU_Config(void);
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 
-/* HAL_Delay() replacement that keeps the periodic services running while it
-   waits. The parameter sweeps below block for ~15 s per pass, which would
-   otherwise starve both the LED cadence and the telemetry stream. */
-static void app_delay_ms(uint32_t ms)
-{
-  uint32_t start = HAL_GetTick();
 
-  while ((HAL_GetTick() - start) < ms)
-  {
-    led_toggle_service();
-    serial_service();
-  }
-}
 
 /* USER CODE END 0 */
 
@@ -126,22 +111,7 @@ int main(void)
   MX_ADC2_Init();
   MX_ADC3_Init();
   /* USER CODE BEGIN 2 */
-
-  // Channel A at 30% duty, channel B at 50%.
-  pwm_init(&channel_a);
-  pwm_set_duty_cycle(&channel_a, 300U);
-  pwm_start(&channel_a);
-
-  // Bring up telemetry. Soft-fails per channel if no sensor answers, so an
-  // unpopulated I2C bus leaves the converter running untouched.
-  telem_init(&telem_a);
-  telem_init(&telem_b);
-  telem_init(&telem_c);
-  telem_init(&telem_d);
-  telem_init(&telem_e);
-
-  led_init();
-  serial_init();
+  app_setup();
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -151,49 +121,7 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-    led_toggle_service();
-    serial_service();
-
-    telem_update(&telem_a);
-    telem_update(&telem_b);
-    telem_update(&telem_c);
-    telem_update(&telem_d);
-    telem_update(&telem_e);
-
-    /* Sweep each parameter min->max over 5 s (100 steps x 50 ms), one at a
-       time, restoring its default before moving to the next. */
-    for (uint32_t i = 0U; i <= 100U; i++)
-    {
-      uint32_t frequency = PWM_MIN_FREQUENCY_HZ +
-                           (((PWM_MAX_FREQUENCY_HZ - PWM_MIN_FREQUENCY_HZ) * i) / 100U);
-      pwm_set_frequency(&channel_a, frequency);
-      pwm_set_frequency(&channel_b, frequency);
-      app_delay_ms(50);
-    }
-    pwm_set_frequency(&channel_a, PWM_DEFAULT_FREQUENCY_HZ);
-    pwm_set_frequency(&channel_b, PWM_DEFAULT_FREQUENCY_HZ);
-
-    for (uint32_t i = 0U; i <= 100U; i++)
-    {
-      uint16_t duty = (uint16_t)(PWM_MIN_DUTY_CYCLE +
-                                 (((PWM_MAX_DUTY_CYCLE - PWM_MIN_DUTY_CYCLE) * i) / 100U));
-      pwm_set_duty_cycle(&channel_a, duty);
-      pwm_set_duty_cycle(&channel_b, duty);
-      app_delay_ms(50);
-    }
-    pwm_set_duty_cycle(&channel_a, 300U);
-    pwm_set_duty_cycle(&channel_b, 500U);
-
-    for (uint32_t i = 0U; i <= 100U; i++)
-    {
-      uint16_t dead_time = (uint16_t)(PWM_MIN_DEAD_TIME_NS +
-                                      (((PWM_MAX_DEAD_TIME_NS - PWM_MIN_DEAD_TIME_NS) * i) / 100U));
-      pwm_set_dead_time(&channel_a, dead_time);
-      pwm_set_dead_time(&channel_b, dead_time);
-      app_delay_ms(50);
-    }
-    pwm_set_dead_time(&channel_a, PWM_DEFAULT_DEAD_TIME_NS);
-    pwm_set_dead_time(&channel_b, PWM_DEFAULT_DEAD_TIME_NS);
+    app_loop();
   }
   /* USER CODE END 3 */
 }

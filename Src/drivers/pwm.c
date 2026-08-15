@@ -2,9 +2,6 @@
 #include "hrtim.h"
 #include "main.h"
 
-/* fHRTIM with prescaler DIV1 (RCC.HRTIMFreq_Value): c_ck 480 MHz, 2.083 ns/tick. */
-#define HRTIM_KERNEL_CLOCK_HZ 480000000U
-
 #define ALL_TIMERS                                                         \
   (HRTIM_TIMERID_TIMER_A | HRTIM_TIMERID_TIMER_B | HRTIM_TIMERID_TIMER_C | \
    HRTIM_TIMERID_TIMER_D | HRTIM_TIMERID_TIMER_E)
@@ -57,6 +54,13 @@ static const channel_hw_t channel_hardware[PWM_CHANNEL_COUNT] = {
 static pwm_channel_t *const channels[PWM_CHANNEL_COUNT] = {
     &channel_a, &channel_b, &channel_c, &channel_d, &channel_e};
 
+pwm_channel_t *pwm_channel(pwm_channel_id_t id) {
+  if ((uint32_t)id >= (uint32_t)PWM_CHANNEL_COUNT) {
+    return NULL;
+  }
+  return channels[(uint32_t)id];
+}
+
 static const channel_hw_t *channel_hw(pwm_channel_id_t channel) {
   return &channel_hardware[(uint32_t)channel];
 }
@@ -90,12 +94,12 @@ static uint32_t clamp(uint32_t value, uint32_t min, uint32_t max) {
 
 /* Truncates: actual frequency lands at or just above requested. */
 static uint32_t hz_to_period_ticks(uint32_t frequency_hz) {
-  return HRTIM_KERNEL_CLOCK_HZ / frequency_hz;
+  return PWM_KERNEL_CLOCK_HZ / frequency_hz;
 }
 
 /* Rounds up: actual dead time is never shorter than requested. */
 static uint32_t ns_to_ticks(uint16_t nanoseconds) {
-  uint64_t ticks = (((uint64_t)nanoseconds * HRTIM_KERNEL_CLOCK_HZ) + 999999999ULL) / 1000000000ULL;
+  uint64_t ticks = (((uint64_t)nanoseconds * PWM_KERNEL_CLOCK_HZ) + 999999999ULL) / 1000000000ULL;
   return (ticks == 0U) ? 1U : (uint32_t)ticks;
 }
 

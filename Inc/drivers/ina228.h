@@ -33,6 +33,23 @@ typedef struct
 
 /* Every function returns false on I2C failure (init also on bad device ID) -
  * a missing or failed sensor must never halt the converter. */
+/* The quantities the telemetry sweep reads. Splitting "which register" from
+ * "what the bytes mean" lets a caller run the transfer itself - the sequencer
+ * in channel_telem.c uses the interrupt-driven HAL call - while the register
+ * map and the scaling stay here, with the chip knowledge. */
+typedef enum
+{
+  INA228_QTY_BUS_VOLTAGE = 0,
+  INA228_QTY_CURRENT
+} ina228_quantity_t;
+
+uint8_t ina228_register(ina228_quantity_t quantity);
+uint16_t ina228_register_size(ina228_quantity_t quantity);
+
+/* Pure: turns the bytes a read returned into engineering units. No I2C, so it
+ * is safe anywhere, including from a completion callback. */
+float ina228_decode(const ina228_t *dev, ina228_quantity_t quantity, const uint8_t *raw);
+
 bool ina228_init(ina228_t *dev);
 bool ina228_read_bus_voltage(ina228_t *dev, float *volts);
 bool ina228_read_shunt_voltage(ina228_t *dev, float *volts);
