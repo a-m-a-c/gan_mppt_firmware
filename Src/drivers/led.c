@@ -18,7 +18,7 @@
 
 #include "main.h"
 #include "pwm.h"
-#include "vbus.h"
+#include "analog.h"
 
 /* Each line carries its own polarity: the channel lines and the status LEDs
    are driven by different circuits. */
@@ -84,7 +84,7 @@ static bool led_any_fault(void)
    costs no flicker at all, rather than one blink per sample. */
 static bool led_bus_connected(void)
 {
-  uint32_t bus_mv = vbus_millivolts();
+  uint32_t bus_mv = analog_vbus_mv();
 
   if (bus_mv >= LED_BUS_ON_MV)
   {

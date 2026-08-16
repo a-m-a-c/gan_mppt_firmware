@@ -17,12 +17,13 @@
 #include <stdbool.h>
 #include <stdio.h>
 
+#include "analog.h"
 #include "channel_telem.h"
+#include "iind.h"
 #include "control.h"
 #include "main.h"
 #include "pwm.h"
 #include "serial.h"
-#include "vbus.h"
 
 /* The longest command is "set <ch> <param> <value>". Extra tokens are still
    counted (tokenize() returns the true total), so a longer line is rejected
@@ -46,7 +47,7 @@
 /* Worst telemetry line: 10-char tick, mask, 5-char vbus, then 20 fields that
    can each reach "-102400" (read_reg20 sign-extends to +/-102.4 V), plus CRLF
    = 181 bytes. 224 leaves headroom without being wasteful. */
-#define COMMAND_TELEM_MAX 224
+#define COMMAND_TELEM_MAX 256
 
 /* A command is consumed only when there is room for everything answering it
    could produce: its reply, the config set it triggers, and the telemetry line
@@ -220,6 +221,94 @@ static size_t reply_ok(char *out, size_t size, const char *echo)
 static size_t reply_err(char *out, size_t size, const char *reason, const char *echo)
 {
   return reply_length(snprintf(out, size, "#err,%s,%s\r\n", reason, echo), size);
+}
+
+/* Raw pin voltages, straight off the ADC with nothing applied - no divider
+   undone, no lookup table consulted. Put a meter on the pin and compare: if
+   they agree, the ADC is fine and any remaining error is in what the firmware
+   assumes about the circuit feeding it. */
+/* Inductor sensing status: what it is doing, where in the period it samples,
+   how many sets have landed, and the calibrated zero per channel. The zeros
+   are here rather than in the telemetry CSV because they change only when
+   iind_calibrate_zero() runs, and every current on the CSV is measured against
+   them - so a reading that looks wrong is checked here first. */
+static size_t reply_iind(char *out, size_t size)
+{
+  return reply_length(snprintf(out, size, "#iind,%u,%u,%lu,%u,%u,%u,%u,%u\r\n",
+                               (unsigned)iind_state(PWM_CHANNEL_A),
+                               (unsigned)iind_sample_point(),
+                               (unsigned long)iind_sample_id(),
+                               (unsigned)iind_zero(PWM_CHANNEL_A),
+                               (unsigned)iind_zero(PWM_CHANNEL_B),
+                               (unsigned)iind_zero(PWM_CHANNEL_C),
+                               (unsigned)iind_zero(PWM_CHANNEL_D),
+                               (unsigned)iind_zero(PWM_CHANNEL_E)),
+                      size);
+}
+
+/* iind start | stop | zero | point <tenths> | (bare) report
+ *
+ * "zero" is refused while any channel is running - see iind_calibrate_zero().
+ * That refusal is surfaced as an #err rather than swallowed, because a zero
+ * that silently did not happen leaves every later current wrong by the
+ * operating point. */
+static size_t handle_iind(const token_t *tokens, size_t count, char *out, size_t size,
+                          const char *echo)
+{
+  uint32_t value;
+
+  if (count == 1U)
+  {
+    return reply_iind(out, size);
+  }
+
+  if (token_is(&tokens[1], "start"))
+  {
+    return (count == 2U) ? (iind_start() ? reply_ok(out, size, echo)
+                                         : reply_err(out, size, "refused", echo))
+                         : reply_err(out, size, "usage", echo);
+  }
+  if (token_is(&tokens[1], "stop"))
+  {
+    if (count != 2U)
+    {
+      return reply_err(out, size, "usage", echo);
+    }
+    iind_stop();
+    return reply_ok(out, size, echo);
+  }
+  if (token_is(&tokens[1], "zero"))
+  {
+    return (count == 2U) ? (iind_calibrate_zero() ? reply_ok(out, size, echo)
+                                                  : reply_err(out, size, "running", echo))
+                         : reply_err(out, size, "usage", echo);
+  }
+  if (token_is(&tokens[1], "point"))
+  {
+    if ((count != 3U) || !token_to_u32(&tokens[2], &value) || (value > UINT16_MAX))
+    {
+      return reply_err(out, size, "usage", echo);
+    }
+    return iind_set_sample_point((uint16_t)value) ? reply_ok(out, size, echo)
+                                                  : reply_err(out, size, "range", echo);
+  }
+
+  return reply_err(out, size, "usage", echo);
+}
+
+static size_t reply_adc(char *out, size_t size)
+{
+  return reply_length(snprintf(out, size, "#adc,%lu,%lu,%lu,%lu,%lu,%lu,%u,%u,%lu\r\n",
+                               (unsigned long)analog_vbus_pin_mv(),
+                               (unsigned long)analog_ntc_pin_mv(PWM_CHANNEL_A),
+                               (unsigned long)analog_ntc_pin_mv(PWM_CHANNEL_B),
+                               (unsigned long)analog_ntc_pin_mv(PWM_CHANNEL_C),
+                               (unsigned long)analog_ntc_pin_mv(PWM_CHANNEL_D),
+                               (unsigned long)analog_ntc_pin_mv(PWM_CHANNEL_E),
+                               (unsigned)analog_vrefint_measured(),
+                               (unsigned)analog_vrefint_factory(),
+                               (unsigned long)analog_ntc5_via_adc2_mv()),
+                      size);
 }
 
 /* Posts one setpoint across every channel in the mask. The value has already
@@ -426,6 +515,14 @@ size_t command_execute(const char *line, char *out, size_t size)
   {
     return (count == 1U) ? reply_ok(out, size, echo) : reply_err(out, size, "usage", echo);
   }
+  if (token_is(&tokens[0], "adc"))
+  {
+    return (count == 1U) ? reply_adc(out, size) : reply_err(out, size, "usage", echo);
+  }
+  if (token_is(&tokens[0], "iind"))
+  {
+    return handle_iind(tokens, count, out, size, echo);
+  }
 
   return reply_err(out, size, "badcommand", echo);
 }
@@ -459,13 +556,18 @@ size_t command_format_config(uint32_t channel_index, char *out, size_t size)
 /* Appends ",<vin_mv>,<iin_ma>,<vout_mv>,<iout_ma>" for one channel. Emits the
    last known good sample when the channel is invalid - the mask tells the host
    which is which, so a dead sensor never breaks the field count. */
+/* The INA228 pair and the inductor amplifier measure different things on
+   different hardware, and either can be dead while the other reads fine -
+   hence a separate mask bit for each, and an inductor current emitted whether
+   or not the I2C sensors answered. */
 static size_t append_channel(char *out, size_t size, const telem_channel_t *t)
 {
-  int written = snprintf(out, size, ",%ld,%ld,%ld,%ld",
+  int written = snprintf(out, size, ",%ld,%ld,%ld,%ld,%ld",
                          (long)(t->latest.vin_v * 1000.0f),
                          (long)(t->latest.iin_a * 1000.0f),
                          (long)(t->latest.vout_v * 1000.0f),
-                         (long)(t->latest.iout_a * 1000.0f));
+                         (long)(t->latest.iout_a * 1000.0f),
+                         (long)iind_current_ma(t->number));
 
   return reply_length(written, size);
 }
@@ -483,15 +585,22 @@ size_t command_format_telemetry(char *out, size_t size)
     return 0U;
   }
 
+  /* Bits 0..4 are the INA228 pairs, 5..9 the inductor sensors - see command.h.
+     One loop so the two halves cannot drift apart. */
   for (uint32_t i = 0U; i < (uint32_t)PWM_CHANNEL_COUNT; i++)
   {
     mask |= channels[i]->valid ? (1U << i) : 0U;
+
+    if (iind_state((pwm_channel_id_t)i) == IIND_STATE_RUNNING)
+    {
+      mask |= 1U << ((uint32_t)PWM_CHANNEL_COUNT + i);
+    }
   }
 
   offset = reply_length(snprintf(out, size, "%lu,%lu,%lu",
                                  (unsigned long)HAL_GetTick(),
                                  (unsigned long)mask,
-                                 (unsigned long)vbus_millivolts()),
+                                 (unsigned long)analog_vbus_mv()),
                         size);
   if (offset == 0U)
   {
@@ -583,6 +692,16 @@ static void report_config(void)
   for (uint32_t i = 0U; i < (uint32_t)PWM_CHANNEL_COUNT; i++)
   {
     (void)serial_write(line, command_format_config(i, line, sizeof(line)));
+  }
+
+  /* The inductor-sensing line rides the same cadence as the config set: it is
+     the same kind of thing - state the host did not ask for but needs to stay
+     in step with - and sending it unprompted means a host that connects
+     mid-run sees the sampler's state without having to poll for it. */
+  {
+    char status[COMMAND_REPLY_MAX];
+
+    (void)serial_write(status, reply_iind(status, sizeof(status)));
   }
 
   command_cfg_due = false;

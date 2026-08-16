@@ -24,18 +24,36 @@
 
 /* =========================== PWM =========================== */
 
-/* Where a channel starts before anything reconfigures it. */
+/* Where a channel starts before anything reconfigures it.
+ *
+ * Duty starts at zero, which for a boost is pass-through: the control FET
+ * never conducts and the output sits at Vin. That is the only safe starting
+ * point. The ideal diode blocks the battery, so a channel's output is
+ * *unloaded* until it charges above the bus - and an unloaded boost at fixed
+ * duty runs toward Vin/(1-D). At 50% on the large array that is 2 x 30.5 =
+ * 61 V, past both the 54.6 V bus maximum and the 55 V OVP trip. A channel is
+ * brought up by ramping from here, not by starting at a working duty. */
 #define PWM_DEFAULT_FREQUENCY_HZ 500000U /* 500 kHz */
-#define PWM_DEFAULT_DUTY_CYCLE   500U    /* 50.0% - tenths of a percent */
+#define PWM_DEFAULT_DUTY_CYCLE   0U      /* 0.0% - tenths of a percent */
 #define PWM_DEFAULT_DEAD_TIME_NS 20U     /* 20 ns */
 
 /* Accepted range for each parameter. The drivers clamp to these, and the host
  * command parser rejects anything outside them - so widening a limit here is
- * all it takes to allow a value on the bench. */
+ * all it takes to allow a value on the bench.
+ *
+ * The duty ceiling is set by the worst real operating point across both PV
+ * array variants. D = 1 - Vin/Vbus, so the highest duty is demanded by the
+ * lowest input into the highest bus: a hot small array (Vmpp 12.11 V, -14% at
+ * a 65 C cell = 10.41 V) into a full 54.6 V battery needs 80.9%. 85% leaves
+ * ~4 points of margin, and nothing above it corresponds to an operating point
+ * that exists. The large array never needs more than 56.5%, so on that array
+ * this ceiling is a long way from binding - it is a backstop, and the real
+ * protection is the dynamic limit D_max = 1 - Vin/Vbus + margin computed from
+ * live sensor values. See .agents/hardware.md. */
 #define PWM_MIN_FREQUENCY_HZ 100000U /* 100 kHz */
 #define PWM_MAX_FREQUENCY_HZ 800000U /* 800 kHz */
-#define PWM_MIN_DUTY_CYCLE   100U    /* 10.0% */
-#define PWM_MAX_DUTY_CYCLE   900U    /* 90.0% */
+#define PWM_MIN_DUTY_CYCLE   0U      /* 0.0% - pass-through */
+#define PWM_MAX_DUTY_CYCLE   850U    /* 85.0% */
 #define PWM_MIN_DEAD_TIME_NS 5U      /* 5 ns */
 #define PWM_MAX_DEAD_TIME_NS 300U    /* 300 ns */
 
@@ -93,6 +111,40 @@
  * backlog, so loop period stays predictable once a control loop shares it. */
 #define COMMAND_MAX_LINES_PER_PASS 4U
 
+/* ================= Inductor current sensing ================= */
+
+/* INA310A2 across a 3 mOhm shunt. The "A2" suffix is the 50 V/V gain option,
+ * so the amplifier presents gain x shunt = 150 mV per amp, and the ADC's 3.3 V
+ * span covers +/-22 A about the calibrated zero - comfortably past the 12 A
+ * hardware trip. Board values, hence here; the scale factors they imply are
+ * derived in iind.c. */
+#define IIND_AMP_GAIN_V_PER_V 50U
+#define IIND_SHUNT_MICRO_OHMS 3000U
+
+/* Samples per switching period, as a divider. The HRTIM master timer runs at
+ * the switching frequency divided by this, so the sample instant stays locked
+ * to the same point in the waveform instead of drifting through it.
+ *
+ * 5 gives 100 kHz at the default 500 kHz switching, which is far more than any
+ * control loop here needs, and leaves ADC3 10 us to convert its four channels
+ * rather than the 2 us one switching period would allow. */
+#define IIND_SAMPLE_DIVIDER 5U
+
+/* Where in the period to sample, in tenths of a percent. 500 is halfway, which
+ * is the middle of the on-time at 50% duty - where the current triangle
+ * crosses its own average.
+ *
+ * The limits keep the sample off the switching edges, where the amplifier is
+ * still slewing and the reading is a transient rather than a current. */
+#define IIND_DEFAULT_SAMPLE_POINT 500U
+#define IIND_MIN_SAMPLE_POINT     50U  /* 5.0% */
+#define IIND_MAX_SAMPLE_POINT     950U /* 95.0% */
+
+/* How long without a completed sample set before iind_state() stops claiming
+ * RUNNING. Generous against a 100 kHz sample rate - it is there to catch a
+ * trigger or DMA that has stopped entirely, not to police jitter. */
+#define IIND_STALE_TIMEOUT_MS 5U
+
 /* ========================= Telemetry ======================== */
 
 /* How often a full five-channel sweep starts. The INA228s average 16 samples
@@ -113,10 +165,14 @@
 #define VBUS_DIV_TOP_OHMS    100000U
 #define VBUS_DIV_BOTTOM_OHMS 5230U
 
-/* How often the bus voltage is sampled. A conversion costs under a
- * microsecond, so this is set by how quickly the bus LED should react rather
- * than by any cost - and sampling well inside the telemetry period means the
- * reported value is never stale. */
-#define VBUS_PERIOD_MS 10U
+/* How often ADC1's six slow inputs - the bus divider and the five NTCs - are
+ * swept. Set by how quickly the bus LED should react; the temperatures come
+ * along for free and would be happy at a tenth of this.
+ *
+ * One sweep is 27 us: the bus conversion is 73 ADC cycles at 76 MHz (~1 us)
+ * and each NTC is 396 (~5.2 us), the difference being sampling time for the
+ * thermistor's higher source impedance. Against a 10 ms cadence that is 0.3%
+ * of the loop, which is cheaper than running two cadences to save it. */
+#define ANALOG_PERIOD_MS 10U
 
 #endif /* CONFIG_H */

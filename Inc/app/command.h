@@ -30,14 +30,41 @@
  *   clear <ch>               clear that channel's latched OCP fault
  *   clear ovp                clear the global OVP fault
  *   get                      report the configuration of all five channels
+ *   adc                      report raw ADC pin voltages (diagnostic)
+ *   iind                     report inductor-sensing status
+ *   iind start | stop        arm or disarm the HRTIM-triggered sampling
+ *   iind zero                recalibrate the zero-current offset; refused
+ *                            unless every channel is stopped
+ *   iind point <tenths>      where in the switching period to sample
  *
  * Values outside their range are rejected, not clamped - the host asked for a
  * specific number, and quietly substituting another one hides the difference
  * between "applied" and "nearly applied". The driver's own clamps stay as the
  * backstop for callers inside the firmware.
  *
- * Board -> host. Every reply line starts with '#', which keeps it clear of the
- * telemetry CSV (a host can tell the two apart on the first character):
+ * Board -> host, telemetry. One CSV line of 28 integer fields per
+ * REPORT_TELEM_PERIOD_MS, never prefixed with '#':
+ *
+ *   <tick_ms>,<valid_mask>,<vbus_mv>,
+ *   then five groups of <vin_mv>,<iin_ma>,<vout_mv>,<iout_ma>,<iind_ma>
+ *
+ * <iind_ma> is inductor current, signed - a synchronous boost can carry it
+ * either way. It is sampled at 100 kHz and reported at 20 Hz, so this is a
+ * trend rather than a waveform; a control loop reads iind.h directly.
+ *
+ * <valid_mask> carries two independent five-bit fields, because the INA228
+ * pair and the inductor amplifier are different hardware and either can fail
+ * alone. Bits 0..4 say channel 1..5 has current data from I2C; bits 5..9 say
+ * channel 1..5 has live inductor sampling.
+ *
+ * Temperature is deliberately absent. analog.c still samples the NTCs and
+ * converts them - see .agents/hardware.md for why the readings are not yet
+ * believable - but nothing here reports them until the divider is understood.
+ * Reporting a number that is smoothly wrong is worse than reporting none.
+ *
+ * Board -> host, replies. Every reply line starts with '#', which keeps it
+ * clear of the telemetry CSV (a host can tell the two apart on the first
+ * character):
  *
  *   #cfg,<ch>,<state>,<freq_hz>,<duty_tenths>,<dead_ns>
  *                            one per channel; <ch> is 1..5 and <state> is the
@@ -45,6 +72,28 @@
  *   #ok,<echo>               command accepted
  *   #err,<reason>,<echo>     command rejected, or - for start/clear against
  *                            "all" - at least one channel refused it
+ *   #adc,<vbus_mv>,<ntc1_mv>..<ntc5_mv>,<vrefint_raw>,<vrefint_cal>
+ *                            millivolts at each ADC pin, with nothing applied:
+ *                            no divider undone, no lookup table consulted.
+ *                            A meter on the pin should read the same. That
+ *                            separates an ADC problem from a wrong assumption
+ *                            about the circuit feeding it.
+ *
+ *   #iind,<state>,<point>,<sample_id>,<zero1>..<zero5>
+ *                            inductor sensing status. <state> is iind_state_t,
+ *                            <point> the sample position in tenths of a
+ *                            percent, <sample_id> a count of completed sets,
+ *                            and the five zeros the calibrated offsets in raw
+ *                            counts. Every current on the CSV is measured
+ *                            against those zeros, so a reading that looks
+ *                            wrong is checked here first.
+ *
+ *                            The last two settle it without a meter at all:
+ *                            the internal reference as measured at startup,
+ *                            and the raw count ST measured in the factory at
+ *                            VDDA = 3.3 V. No pin or divider is involved, so
+ *                            if those two disagree the ADC itself is wrong
+ *                            and every other number here is meaningless.
  *
  * The #cfg lines are the authority on what is in force; a reply only says how
  * the command itself was received. */

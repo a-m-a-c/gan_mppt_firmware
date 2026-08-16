@@ -1,6 +1,7 @@
 #include "interrupts.h"
 #include "channel_telem.h"
 #include "i2c.h"
+#include "iind.h"
 #include "main.h"
 #include "pwm.h"
 #include "serial.h"
@@ -84,5 +85,20 @@ void HAL_I2C_ErrorCallback(I2C_HandleTypeDef *hi2c)
   if (hi2c->Instance == I2C1)
   {
     telem_i2c_error();
+  }
+}
+
+/* Shared by every ADC handle, so it checks which instance completed. Only
+   ADC3 is of interest: it carries four of the five inductor current channels,
+   so its sequence completing is what marks a full set. ADC2's single channel
+   lands in the same window and needs no separate notification.
+
+   analog.c's ADC1 conversions are polled, not interrupt-driven, so they never
+   reach here. */
+void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc)
+{
+  if (hadc->Instance == ADC3)
+  {
+    iind_conversion_complete();
   }
 }

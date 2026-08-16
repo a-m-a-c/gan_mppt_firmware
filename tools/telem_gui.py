@@ -16,11 +16,16 @@ Usage (uv resolves pyserial from the inline metadata above - no venv needed):
     uv run tools/telem_gui.py --read-only      # plot only, no PWM control
     uv run tools/telem_gui.py --list           # show candidate serial ports
 
-Telemetry line format (23 integer fields):
+Telemetry line format (28 integer fields):
     <tick_ms>,<valid_mask>,<vbus_mv>,
-    <ch1_vin_mv>,<ch1_iin_ma>,<ch1_vout_mv>,<ch1_iout_ma>,  ... through ch5
+    <ch1_vin_mv>,<ch1_iin_ma>,<ch1_vout_mv>,<ch1_iout_ma>,<ch1_iind_ma>,
+    ... through ch5
 
-Everything else the firmware sends starts with '#' - see Inc/drivers/command.h
+Iind is inductor current, signed, sampled at 100 kHz and reported at 20 Hz -
+a trend, not a waveform. valid_mask bits 0..4 flag the I2C sensors per channel,
+bits 5..9 flag live inductor sampling.
+
+Everything else the firmware sends starts with '#' - see Inc/app/command.h
 for the command grammar and the reply lines parsed below.
 
 The PWM panel drives a live power stage. Nothing is energised until Start is
@@ -45,7 +50,7 @@ except ImportError:
              "which installs it from the inline metadata above.")
 
 BAUD = 115200
-FIELD_COUNT = 23
+FIELD_COUNT = 28
 HISTORY = 24000          # ~20 min at 20 Hz
 LIKELY = ("cp210", "ch340", "ft232", "ftdi", "usb serial", "silicon labs")
 
@@ -61,7 +66,7 @@ STATE_NAMES = ["uninit", "stopped", "running", "faulted"]
 # rather than costing a round trip - the firmware re-checks regardless.
 LIMITS = {
     "freq_hz": [100000, 800000],
-    "duty_tenths": [100, 900],
+    "duty_tenths": [0, 850],
     "dead_ns": [5, 300],
 }
 
@@ -70,6 +75,7 @@ LIMITS = {
 COMMAND_MAX = 95
 
 # Series order must match the firmware line. (label, unit, scale-from-integer)
+# Temperature is not reported - see Inc/app/command.h.
 SERIES = [("V_BUS", "V", 1000.0)]
 for _ch in range(1, 6):
     SERIES += [
@@ -77,6 +83,7 @@ for _ch in range(1, 6):
         (f"CH{_ch} Iin", "A", 1000.0),
         (f"CH{_ch} Vout", "V", 1000.0),
         (f"CH{_ch} Iout", "A", 1000.0),
+        (f"CH{_ch} Iind", "A", 1000.0),
     ]
 
 # Shared between the reader thread and the HTTP handlers.
@@ -90,6 +97,9 @@ _status = {"connected": False, "port": None, "error": None, "valid_mask": 0}
 # strings, and replacing it wholesale cannot drift out of sync.
 _config = {}
 _events = deque(maxlen=12)
+# Inductor sensing status, from the "#iind" report. Empty until one arrives -
+# the page shows "unknown" rather than pretending it is stopped.
+_iind = {}
 
 # The open port, so the HTTP threads can write commands to it. Only the reader
 # thread assigns it; None means "not connected right now".
@@ -149,6 +159,18 @@ def handle_report(line):
             with _lock:
                 _config[channel] = {"state": state, "freq_hz": freq,
                                     "duty_tenths": duty, "dead_ns": dead}
+        return
+    if parts[0] == "iind" and len(parts) == 9:
+        try:
+            state, point, samples = (int(p) for p in parts[1:4])
+            zeros = [int(p) for p in parts[4:]]
+        except ValueError:
+            return
+        with _lock:
+            # sample_id is a running count; the page turns successive values
+            # into a rate, which is the number that says whether the HRTIM
+            # trigger is actually firing.
+            _iind.update(state=state, point=point, samples=samples, zeros=zeros)
         return
     # "#ok,..." / "#err,..." and anything unrecognised: show it to the operator
     # rather than dropping it, since it is always about a command they sent.
@@ -237,8 +259,12 @@ class Handler(BaseHTTPRequestHandler):
         if route.path == "/":
             self._send(200, PAGE, "text/html; charset=utf-8")
         elif route.path == "/series":
-            self._send(200, json.dumps([{"label": s[0], "unit": s[1]} for s in SERIES]),
-                       "application/json")
+            # "invalid" is the no-reading sentinel for series that have one, so
+            # the page can show "--" without hardcoding a magic value.
+            self._send(200, json.dumps([
+                {"label": s[0], "unit": s[1], "invalid": None,
+                 "dp": len(str(int(s[2]))) - 1}
+                for s in SERIES]), "application/json")
         elif route.path == "/data":
             since = int((parse_qs(route.query).get("since") or ["0"])[0])
             with _lock:
@@ -246,10 +272,11 @@ class Handler(BaseHTTPRequestHandler):
                 status = dict(_status)
                 config = dict(_config)
                 events = list(_events)
+                iind = dict(_iind)
             status["read_only"] = _read_only
             self._send(200, json.dumps({"status": status, "rows": rows,
                                         "config": config, "events": events,
-                                        "limits": LIMITS}),
+                                        "iind": iind, "limits": LIMITS}),
                        "application/json")
         else:
             self._send(404, "not found", "text/plain")
@@ -363,6 +390,38 @@ PAGE = r"""<!doctype html>
   #pwmlog { margin-top:8px; max-height:76px; overflow-y:auto; white-space:pre-wrap;
             font:11px/1.45 ui-monospace,Consolas,DejaVu Sans Mono,monospace;
             color:var(--dim); }
+
+  /* Inductor sensing. Sits with the PWM controls rather than the plot: it is
+     something you drive, and its sample point only means anything alongside
+     the duty it is measured against. */
+  #iind { margin-top:10px; border:1px solid var(--line); background:var(--panel);
+          padding:10px 12px 12px; flex:none; }
+  #iindrow { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+  #iindzero { margin-top:8px; color:var(--dim);
+              font:11px ui-monospace,Consolas,DejaVu Sans Mono,monospace; }
+  /* A sample rate of zero while RUNNING means the HRTIM trigger is not firing,
+     which looks identical to "working" on every other indicator. */
+  #iindrate.dead { color:#992222; font-weight:bold; }
+
+  /* Live readout: every telemetry field as a number, because a trace shows a
+     shape but not a value. Boxes double as the series toggles - the coloured
+     left edge is the same colour as the trace, filled when it is plotted. */
+  #readout { margin-top:10px; border:1px solid var(--line); background:var(--panel);
+             padding:10px 12px 12px; flex:none; }
+  #rdgrid { display:grid; gap:6px;
+            grid-template-columns:repeat(auto-fill, minmax(104px, 1fr)); }
+  .rd { border:1px solid var(--line); border-left-width:4px; padding:4px 7px;
+        cursor:pointer; user-select:none; background:var(--panel); }
+  .rd:hover { background:var(--hover); }
+  .rd.sel { background:var(--hover); }
+  .rd .lbl { color:var(--dim); font-size:10px; text-transform:uppercase;
+             letter-spacing:.05em; white-space:nowrap; overflow:hidden;
+             text-overflow:ellipsis; }
+  .rd .val { font:14px/1.35 ui-monospace,Consolas,DejaVu Sans Mono,monospace;
+             white-space:nowrap; }
+  /* An open or shorted sensor reads "--", not a plausible number. */
+  .rd.bad .val { color:#992222; }
+  .rd.stale .val { color:var(--dim); }
 </style></head><body>
 <div id="side">
   <h2>Series</h2><div id="list"></div>
@@ -385,9 +444,29 @@ PAGE = r"""<!doctype html>
     </label>
     <button id="pause">Pause</button>
     <button id="clear">Clear</button>
+    <span id="noaxis" style="color:#992222"></span>
     <span id="stat"></span>
   </div>
   <div id="wrap"><canvas id="cv"></canvas></div>
+  <div id="iind">
+    <div class="grp" style="margin:0 0 8px">Inductor current sensing</div>
+    <div id="iindrow">
+      <span>State <b id="iindstate">unknown</b></span>
+      <span>Samples <b id="iindrate">-</b></span>
+      <label style="gap:6px">Sample point
+        <input id="iindpoint" type="number" step="0.1" min="5" max="95" style="width:66px"> %
+      </label>
+      <button id="iindapply">Apply</button>
+      <button class="go" id="iindstart">Start</button>
+      <button class="halt" id="iindstop">Stop</button>
+      <button id="iindzerobtn" title="refused unless every channel is stopped">Calibrate zero</button>
+    </div>
+    <div id="iindzero"></div>
+  </div>
+  <div id="readout">
+    <div class="grp" style="margin:0 0 8px">Live values <span id="rdage"></span></div>
+    <div id="rdgrid"></div>
+  </div>
   <div id="pwm">
     <table>
       <thead><tr>
@@ -414,9 +493,21 @@ let series = [], on = new Set(), rows = [], since = 0;
 let paused = false, frozenEnd = null;
 const cv = document.getElementById("cv"), ctx = cv.getContext("2d");
 
+// One painter per series, so the sidebar bubble and the readout box - two
+// views of the same on/off state - can never disagree.
+const painters = [], boxes = [];
+let lastRowAt = 0;
+
+function toggle(i) {
+  on.has(i) ? on.delete(i) : on.add(i);
+  painters[i]();
+  draw();
+}
+
 fetch("/series").then(r => r.json()).then(s => {
   series = s;
   const list = document.getElementById("list");
+  const grid = document.getElementById("rdgrid");
   let group = "", row = null;
   s.forEach((it, i) => {
     const g = it.label.startsWith("CH") ? it.label.slice(0, 3) : "Bus";
@@ -434,19 +525,56 @@ fetch("/series").then(r => r.json()).then(s => {
     // Strip the "CHn " prefix - the group heading already says which channel.
     bub.append(dot, document.createTextNode(it.label.replace(/^CH\d /, "")));
     bub.style.borderColor = colour;
-    const paint = () => {
+
+    const box = document.createElement("div");
+    box.className = "rd";
+    box.style.borderLeftColor = colour;
+    box.innerHTML = '<div class="lbl"></div><div class="val">--</div>';
+    box.querySelector(".lbl").textContent = it.label;
+    box.title = it.label + " - click to plot";
+    grid.appendChild(box);
+    boxes.push(box);
+
+    painters[i] = () => {
       const active = on.has(i);
       bub.classList.toggle("off", !active);
       bub.style.background = active ? colour : "transparent";
       bub.style.color = active ? "#fff" : colour;
+      box.classList.toggle("sel", active);
     };
-    bub.onclick = () => { on.has(i) ? on.delete(i) : on.add(i); paint(); draw(); };
+    bub.onclick = () => toggle(i);
+    box.onclick = () => toggle(i);
     if (i === 0) on.add(0);
-    paint();
+    painters[i]();
     row.appendChild(bub);
   });
   draw();
+  updateReadout();
 });
+
+// The newest sample, as numbers. A trace shows a shape; this shows a value,
+// which is what you want when checking a sensor rather than watching a loop.
+function updateReadout() {
+  const vals = rows.length ? rows[rows.length - 1][1] : null;
+  const ageMs = lastRowAt ? Date.now() - lastRowAt : Infinity;
+  // One report period is 50 ms, so a second without one means the link is
+  // gone, not merely quiet - dim the numbers rather than leaving them looking
+  // live.
+  const stale = ageMs > 1000;
+  document.getElementById("rdage").textContent =
+    lastRowAt ? "· " + (ageMs / 1000).toFixed(1) + " s ago" : "";
+
+  series.forEach((it, i) => {
+    const box = boxes[i];
+    if (!box) return;
+    const v = vals ? vals[i] : null;
+    const bad = v !== null && it.invalid !== null && Math.abs(v - it.invalid) < 1e-6;
+    box.classList.toggle("bad", bad);
+    box.classList.toggle("stale", stale && !bad);
+    box.querySelector(".val").textContent =
+      (v === null || bad) ? "--" : v.toFixed(it.dp) + " " + it.unit;
+  });
+}
 
 document.getElementById("span").onchange = draw;
 document.getElementById("avg").oninput = draw;
@@ -508,7 +636,7 @@ for (let n = 1; n <= 5; n++) {
   // thumb the way they read.
   html += "<td>" + stepButton(n, -10) + stepButton(n, -1) +
           ' <input id="s' + n + '" data-ch="' + n + '" type="range" step="1" ' +
-          'min="100" max="900" title="applies as it moves" disabled> ' +
+          'min="0" max="850" title="applies as it moves" disabled> ' +
           stepButton(n, 1) + stepButton(n, 10) + "</td>" +
           '<td><button data-ch="' + n + '" data-act="apply" disabled>Apply</button> ' +
           '<button data-ch="' + n + '" data-act="init" disabled>Init</button></td>' +
@@ -546,7 +674,7 @@ function sliding(n) {
 // one, so a run of quick clicks accumulates instead of fighting a report that
 // has not caught up yet.
 function stepDuty(n, delta) {
-  const [lo, hi] = limits ? limits.duty_tenths : [100, 900];
+  const [lo, hi] = limits ? limits.duty_tenths : [0, 850];
   const base = sliding(n) ? slide[n].target
                           : +document.getElementById("s" + n).value;
   slideDuty(n, Math.min(hi, Math.max(lo, base + delta)));
@@ -600,6 +728,48 @@ async function send(cmds) {
     if (d.error) note(d.error);
     return d.error || "";
   } catch (e) { note(String(e)); return String(e); }
+}
+
+// ---- Inductor current sensing --------------------------------------------
+// The sample point is edited in percent and sent in tenths, like the duty
+// field, so the page never shows the firmware's raw units.
+const IIND_STATES = ["uninit", "stopped", "running", "stale"];
+let iindSeen = null, iindSeenAt = 0, iindTouched = 0;
+
+document.getElementById("iindstart").onclick = () => send(["iind start"]);
+document.getElementById("iindstop").onclick  = () => send(["iind stop"]);
+document.getElementById("iindzerobtn").onclick = () => send(["iind zero"]);
+document.getElementById("iindapply").onclick = () => {
+  const v = Math.round(parseFloat(document.getElementById("iindpoint").value) * 10);
+  if (Number.isFinite(v)) send(["iind point " + v]);
+};
+// While the field is being edited, incoming reports leave it alone - otherwise
+// a 1 Hz report overwrites whatever is half-typed.
+document.getElementById("iindpoint").oninput = () => { iindTouched = Date.now(); };
+
+function updateIind(d) {
+  const s = d.iind;
+  if (!s || s.state === undefined) return;
+
+  document.getElementById("iindstate").textContent = IIND_STATES[s.state] || "?";
+
+  // A rate, not a count: "running" with a frozen counter means the HRTIM
+  // trigger is not firing, and nothing else on this page would show that.
+  const now = Date.now();
+  let rate = "-";
+  if (iindSeen !== null && now > iindSeenAt) {
+    rate = Math.round((s.samples - iindSeen) * 1000 / (now - iindSeenAt)) + "/s";
+  }
+  if (s.samples !== iindSeen) { iindSeen = s.samples; iindSeenAt = now; }
+  const rateEl = document.getElementById("iindrate");
+  rateEl.textContent = rate;
+  rateEl.classList.toggle("dead", s.state === 2 && rate === "0/s");
+
+  if (now - iindTouched > 2000)
+    document.getElementById("iindpoint").value = (s.point / 10).toFixed(1);
+
+  document.getElementById("iindzero").textContent =
+    "zero counts  " + (s.zeros || []).map((z, i) => "CH" + (i + 1) + ":" + z).join("  ");
 }
 
 async function applyRow(n) {
@@ -685,8 +855,10 @@ async function poll() {
     const r = await fetch("/data?since=" + since);
     const d = await r.json();
     for (const [seq, t, vals] of d.rows) { since = seq; rows.push([t, vals]); }
+    if (d.rows.length) { lastRowAt = Date.now(); }
     if (rows.length > 30000) rows.splice(0, rows.length - 30000);
     updatePwm(d);
+    updateIind(d);
     const st = d.status;
     document.getElementById("stat").innerHTML =
       '<span class="dot" style="background:' + (st.connected ? "#2ca02c" : "#d62728") + '"></span>' +
@@ -694,6 +866,9 @@ async function poll() {
                     : ("disconnected" + (st.error ? " &middot; " + st.error : ""))) +
       (paused ? ' &middot; <b>paused</b>' : "");
     draw();
+    // Deliberately outside the pause check: pausing freezes the plot so a
+    // shape can be read, but the numbers should stay live.
+    updateReadout();
   } catch (e) { /* server gone; next tick retries */ }
   setTimeout(poll, 250);
 }
@@ -720,6 +895,9 @@ function draw() {
   cv.width = w * dpr; cv.height = h * dpr;
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, w, h);
+  // Cleared up front so the warning cannot outlive the selection that caused
+  // it - the returns below skip the block that sets it.
+  document.getElementById("noaxis").textContent = "";
   if (!rows.length || !on.size) return;
 
   const span = +document.getElementById("span").value;
@@ -765,10 +943,20 @@ function draw() {
   const L = 70, R = 70, T = 14, B = 28, pw = w - L - R, ph = h - T - B;
   if (pw <= 0 || ph <= 0) return;
 
-  // Volts on the left axis, amps on the right - mixing them on one scale
-  // makes both unreadable.
+  // Two axes, left and right, claimed by whichever units are actually selected
+  // - in series order, so the assignment is stable as bubbles are toggled.
+  // Mixing unlike units on one scale makes all of them unreadable, and there
+  // are only two edges to hang an axis on, so a third unit goes unplotted and
+  // is named in the status line rather than silently vanishing.
+  const units = [];
+  for (const i of [...on].sort((a, b) => a - b))
+    if (!units.includes(series[i].unit)) units.push(series[i].unit);
+  const shown = units.slice(0, 2), dropped = units.slice(2);
+  document.getElementById("noaxis").textContent =
+    dropped.length ? "no axis left for " + dropped.join(", ") : "";
+
   const extent = {};
-  for (const u of ["V", "A"]) {
+  for (const u of shown) {
     let lo = Infinity, hi = -Infinity;
     for (const i of on) {
       if (series[i].unit !== u) continue;
@@ -780,7 +968,7 @@ function draw() {
   // Snap both axes to 1/2/2.5/5 x 10^n steps, then give them a common division
   // count so the two label columns share one set of horizontal gridlines.
   const axis = {};
-  for (const u of ["V", "A"]) {
+  for (const u of shown) {
     if (!extent[u]) { axis[u] = null; continue; }
     let [lo, hi] = extent[u];
     if (hi - lo < 1e-9) { hi += 0.5; lo -= 0.5; }
@@ -788,10 +976,11 @@ function draw() {
     const base = Math.floor(lo / step) * step;
     axis[u] = { step, base, divs: Math.max(1, Math.ceil((hi - base) / step)) };
   }
-  const divs = Math.max(axis.V ? axis.V.divs : 1, axis.A ? axis.A.divs : 1);
+  const divs = Math.max(1, ...shown.map(u => axis[u] ? axis[u].divs : 1));
   const rng = {};
-  for (const u of ["V", "A"])
+  for (const u of shown)
     rng[u] = axis[u] ? [axis[u].base, axis[u].base + axis[u].step * divs] : null;
+  const uL = shown[0], uR = shown[1];
 
   const X = t => L + ((t - tStart) / span) * pw;
   const Y = (v, u) => { const [a, b] = rng[u]; return T + ph - ((v - a) / (b - a)) * ph; };
@@ -803,10 +992,10 @@ function draw() {
     const y = T + ph - (ph * i) / divs;
     ctx.strokeStyle = (i === 0) ? "#aab3c0" : "#e4e8ee";
     ctx.beginPath(); ctx.moveTo(L, y); ctx.lineTo(L + pw, y); ctx.stroke();
-    if (axis.V) { ctx.textAlign = "right";
-      ctx.fillText(fmt(axis.V.base + axis.V.step * i, axis.V.step) + " V", L - 8, y + 4); }
-    if (axis.A) { ctx.textAlign = "left";
-      ctx.fillText(fmt(axis.A.base + axis.A.step * i, axis.A.step) + " A", L + pw + 8, y + 4); }
+    if (uL && axis[uL]) { ctx.textAlign = "right";
+      ctx.fillText(fmt(axis[uL].base + axis[uL].step * i, axis[uL].step) + " " + uL, L - 8, y + 4); }
+    if (uR && axis[uR]) { ctx.textAlign = "left";
+      ctx.fillText(fmt(axis[uR].base + axis[uR].step * i, axis[uR].step) + " " + uR, L + pw + 8, y + 4); }
   }
 
   // Vertical gridlines land on round time offsets rather than on fractions of

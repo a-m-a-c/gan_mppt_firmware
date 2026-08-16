@@ -17,11 +17,12 @@
 #include "channel_telem.h"
 #include "command.h"
 #include "control.h"
+#include "iind.h"
 #include "led.h"
 #include "main.h"
 #include "pwm.h"
 #include "serial.h"
-#include "vbus.h"
+#include "analog.h"
 
 void app_setup(void)
 {
@@ -35,9 +36,15 @@ void app_setup(void)
   telem_start_sweeps();
 
   control_init();
-  vbus_init();
+  analog_init();
   led_init();
   serial_init();
+
+  // Inductor current sensing. Configures the ADCs and the HRTIM sample clock
+  // and leaves every channel stopped - nothing converts until iind_start().
+  // Returns false until the CubeMX changes in .agents/hardware.md are made;
+  // the converter runs without it, so that is not made fatal.
+  (void)iind_init();
 
   // Nothing starts switching here. The host brings channels up over the
   // serial link - init / start / stop, see command.h - or add pwm_init()
@@ -47,7 +54,7 @@ void app_setup(void)
 void app_loop(void)
 {
   telem_service();            /* starts or advances an I2C transfer; never waits */
-  vbus_service();             /* one ADC conversion (~1 us) on its own cadence  */
+  analog_service();           /* bus volts + 5 NTCs, one 27 us sweep per 10 ms */
 
   /* Host -> board -> host, in that order and within one pass, so the "#cfg"
      lines a command triggers already describe the applied result. Keep these
@@ -56,5 +63,5 @@ void app_loop(void)
   control_service();          /* apply every pending setpoint to the driver    */
   command_report_service();   /* queue the "#cfg" set and the telemetry CSV    */
 
-  led_service();              /* pure reads of pwm and vbus, no I/O            */
+  led_service();              /* pure reads of pwm and analog, no I/O          */
 }

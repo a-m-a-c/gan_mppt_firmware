@@ -103,9 +103,25 @@ static uint32_t ns_to_ticks(uint16_t nanoseconds) {
   return (ticks == 0U) ? 1U : (uint32_t)ticks;
 }
 
+/* Smallest legal HRTIM compare value at prescaler DIV1: 3 periods of f_HRTIM,
+   i.e. 6.25 ns at 480 MHz. Zero is not legal and its behaviour is undefined -
+   plausibly leaving output1 permanently set, which with output1 driving the
+   control FET is a continuous inductor short. Never program below this. */
+#define PWM_MIN_COMPARE_TICKS 3U
+
+/* A 0% request lands on the floor above rather than on zero. The resulting
+   pulse is 3 ticks wide, and dead-time insertion delays output1's turn-on by
+   the rising dead time - itself never fewer than 3 ticks, since
+   PWM_MIN_DEAD_TIME_NS (5 ns) rounds up to 3 ticks at 480 MHz. So the pulse is
+   fully consumed and the control FET does not conduct at all, which is what
+   makes 0% the safe pass-through state a channel starts from.
+
+   Output1 being the control FET was confirmed on the bench 2026-08-15; the
+   safety of a 0% default rests on it. See .agents/hardware.md. */
 static uint32_t duty_to_compare_ticks(uint32_t period_ticks, uint16_t duty_tenths_pct) {
   uint32_t duty = clamp(duty_tenths_pct, PWM_MIN_DUTY_CYCLE, PWM_MAX_DUTY_CYCLE);
-  return (period_ticks * duty) / PWM_DUTY_SCALE;
+  uint32_t compare = (period_ticks * duty) / PWM_DUTY_SCALE;
+  return (compare < PWM_MIN_COMPARE_TICKS) ? PWM_MIN_COMPARE_TICKS : compare;
 }
 
 static uint32_t enter_critical(void) {
