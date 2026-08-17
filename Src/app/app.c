@@ -1,67 +1,34 @@
-/**
-  ******************************************************************************
-  * @file    app.c
-  * @author  Angus Macdonald
-  * @brief   Application entry points, called from the generated main().
-  ******************************************************************************
-  * @attention
-  *
-  * This software is licensed under terms that can be found in the LICENSE file
-  * in the root directory of this software component.
-  * If no LICENSE file comes with this software, it is provided AS-IS.
-  *
-  ******************************************************************************
-  */
+// Contains setup and loop phases, called in main.c in init and loop.
+#include <stdbool.h>
+#include <stdint.h>
+
 #include "app.h"
 
-#include "channel_telem.h"
-#include "command.h"
-#include "control.h"
-#include "iind.h"
+#include "channel.h"
 #include "led.h"
-#include "main.h"
 #include "pwm.h"
-#include "serial.h"
-#include "analog.h"
+#include "config.h"
+#include "main.h"
 
-void app_setup(void)
-{
-  // Bring up telemetry. Soft-fails per channel if no sensor answers, so an
-  // unpopulated I2C bus leaves the converter running untouched.
-  telem_init(&telem_a);
-  telem_init(&telem_b);
-  telem_init(&telem_c);
-  telem_init(&telem_d);
-  telem_init(&telem_e);
-  telem_start_sweeps();
-
-  control_init();
-  analog_init();
+void app_setup(void) {
+  channel_init_all();
   led_init();
-  serial_init();
-
-  // Inductor current sensing. Configures the ADCs and the HRTIM sample clock
-  // and leaves every channel stopped - nothing converts until iind_start().
-  // Returns false until the CubeMX changes in .agents/hardware.md are made;
-  // the converter runs without it, so that is not made fatal.
-  (void)iind_init();
-
-  // Nothing starts switching here. The host brings channels up over the
-  // serial link - init / start / stop, see command.h - or add pwm_init()
-  // calls of your own above.
+  led_lightshow(true);
+  pwm_init(CHANNEL_A);
+  pwm_start(CHANNEL_A);
 }
 
-void app_loop(void)
-{
-  telem_service();            /* starts or advances an I2C transfer; never waits */
-  analog_service();           /* bus volts + 5 NTCs, one 27 us sweep per 10 ms */
+static uint16_t target_duty_cycle = 300; //20 %
+static uint16_t current_duty_cycle = 0;
 
-  /* Host -> board -> host, in that order and within one pass, so the "#cfg"
-     lines a command triggers already describe the applied result. Keep these
-     adjacent and in this order - see command.h. */
-  command_service();          /* drain received lines, parse, post requests    */
-  control_service();          /* apply every pending setpoint to the driver    */
-  command_report_service();   /* queue the "#cfg" set and the telemetry CSV    */
+void app_loop(void) {
+  if (led_lightshow_service()) {
+    return;
+  }
+  while (current_duty_cycle <= target_duty_cycle) {
+    pwm_set_duty_cycle(CHANNEL_A, current_duty_cycle);
+    current_duty_cycle += 10;
+    HAL_Delay(200);
+  }
 
-  led_service();              /* pure reads of pwm and analog, no I/O          */
 }

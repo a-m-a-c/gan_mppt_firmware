@@ -41,7 +41,7 @@ typedef struct
   uint32_t apply_failures;
 } control_channel_t;
 
-static control_channel_t control_channels[PWM_CHANNEL_COUNT];
+static control_channel_t control_channels[CHANNEL_COUNT];
 
 /* OVP is global in the driver, so its clear is global here too. */
 static volatile bool control_clear_ovp_pending;
@@ -69,9 +69,9 @@ static void exit_critical(uint32_t primask)
   }
 }
 
-static control_channel_t *channel_slot(pwm_channel_id_t channel)
+static control_channel_t *channel_slot(uint32_t channel)
 {
-  if ((uint32_t)channel >= (uint32_t)PWM_CHANNEL_COUNT)
+  if ((uint32_t)channel >= CHANNEL_COUNT)
   {
     return NULL;
   }
@@ -92,7 +92,7 @@ static void post(control_channel_t *slot, uint32_t bit, control_source_t src)
 
 void control_init(void)
 {
-  for (uint32_t i = 0U; i < (uint32_t)PWM_CHANNEL_COUNT; i++)
+  for (uint32_t i = 0U; i < CHANNEL_COUNT; i++)
   {
     control_channels[i].pending = 0U;
     control_channels[i].last_source = CONTROL_SRC_NONE;
@@ -102,7 +102,7 @@ void control_init(void)
   control_clear_ovp_pending = false;
 }
 
-bool control_request_frequency(pwm_channel_id_t channel, uint32_t hz, control_source_t src)
+bool control_request_frequency(uint32_t channel, uint32_t hz, control_source_t src)
 {
   control_channel_t *slot = channel_slot(channel);
 
@@ -116,7 +116,7 @@ bool control_request_frequency(pwm_channel_id_t channel, uint32_t hz, control_so
   return true;
 }
 
-bool control_request_duty(pwm_channel_id_t channel, uint16_t tenths, control_source_t src)
+bool control_request_duty(uint32_t channel, uint16_t tenths, control_source_t src)
 {
   control_channel_t *slot = channel_slot(channel);
 
@@ -130,7 +130,7 @@ bool control_request_duty(pwm_channel_id_t channel, uint16_t tenths, control_sou
   return true;
 }
 
-bool control_request_dead_time(pwm_channel_id_t channel, uint16_t ns, control_source_t src)
+bool control_request_dead_time(uint32_t channel, uint16_t ns, control_source_t src)
 {
   control_channel_t *slot = channel_slot(channel);
 
@@ -144,7 +144,7 @@ bool control_request_dead_time(pwm_channel_id_t channel, uint16_t ns, control_so
   return true;
 }
 
-bool control_request_init(pwm_channel_id_t channel, control_source_t src)
+bool control_request_init(uint32_t channel, control_source_t src)
 {
   control_channel_t *slot = channel_slot(channel);
 
@@ -159,23 +159,22 @@ bool control_request_init(pwm_channel_id_t channel, control_source_t src)
   return true;
 }
 
-bool control_request_run(pwm_channel_id_t channel, bool run, control_source_t src)
+bool control_request_run(uint32_t channel, bool run, control_source_t src)
 {
   control_channel_t *slot = channel_slot(channel);
-  pwm_channel_t *pwm = pwm_channel(channel);
 
-  if ((slot == NULL) || (pwm == NULL))
+  if (slot == NULL)
   {
     return false;
   }
 
   /* Refuse a start the driver would refuse anyway - faulted, still running, or
-     never initialised. pwm_get_state() is a pure read, so asking costs nothing
+     never initialised. Reading op_state is a pure read, so asking costs nothing
      and lets the caller answer its host now rather than after the apply. This
      is advisory: a fault landing in the microseconds before control_service()
      runs still turns the start into an apply_failure, and the config report
      that follows tells the truth either way. */
-  if (run && (pwm_get_state(pwm) != PWM_STATE_STOPPED))
+  if (run && (channel_by_id(channel)->pwm.op_state != PWM_STATE_STOPPED))
   {
     return false;
   }
@@ -185,7 +184,7 @@ bool control_request_run(pwm_channel_id_t channel, bool run, control_source_t sr
   return true;
 }
 
-bool control_request_clear_ocp(pwm_channel_id_t channel, control_source_t src)
+bool control_request_clear_ocp(uint32_t channel, control_source_t src)
 {
   control_channel_t *slot = channel_slot(channel);
 
@@ -224,9 +223,9 @@ static uint32_t take_pending(control_channel_t *slot, control_channel_t *snapsho
   return bits;
 }
 
-static void start_channel(control_channel_t *slot, pwm_channel_t *pwm)
+static void start_channel(control_channel_t *slot, uint32_t channel)
 {
-  if (!pwm_start(pwm))
+  if (!pwm_start(channel))
   {
     slot->apply_failures++;
   }
@@ -249,12 +248,11 @@ bool control_service(void)
     applied = true;
   }
 
-  for (uint32_t i = 0U; i < (uint32_t)PWM_CHANNEL_COUNT; i++)
+  for (uint32_t i = 0U; i < CHANNEL_COUNT; i++)
   {
     control_channel_t *slot = &control_channels[i];
     control_channel_t snapshot;
     uint32_t bits;
-    pwm_channel_t *pwm;
 
     if (slot->pending == 0U)
     {
@@ -262,8 +260,7 @@ bool control_service(void)
     }
 
     bits = take_pending(slot, &snapshot);
-    pwm = pwm_channel((pwm_channel_id_t)i);
-    if ((bits == 0U) || (pwm == NULL))
+    if (bits == 0U)
     {
       continue;
     }
@@ -275,61 +272,61 @@ bool control_service(void)
        costs exactly one stop and one start. */
     if ((bits & CONTROL_PEND_DISRUPTIVE) != 0U)
     {
-      pwm_stop(pwm);
+      pwm_stop(i);
     }
 
     if ((bits & CONTROL_PEND_INIT) != 0U)
     {
-      pwm_init(pwm);
+      pwm_init(i);
     }
     if ((bits & CONTROL_PEND_FREQ) != 0U)
     {
-      pwm_set_frequency(pwm, snapshot.frequency_hz);
+      pwm_set_frequency(i, snapshot.frequency_hz);
     }
     if ((bits & CONTROL_PEND_DUTY) != 0U)
     {
-      (void)pwm_set_duty_cycle(pwm, snapshot.duty_tenths);
+      (void)pwm_set_duty_cycle(i, snapshot.duty_tenths);
     }
     if ((bits & CONTROL_PEND_DEAD) != 0U)
     {
-      pwm_set_dead_time(pwm, snapshot.dead_time_ns);
+      pwm_set_dead_time(i, snapshot.dead_time_ns);
     }
 
     /* Before the run bit, so "clear 1" and "start 1" in one pass works. */
     if ((bits & CONTROL_PEND_CLEAR) != 0U)
     {
-      (void)pwm_clear_OCP_fault(pwm);
+      (void)pwm_clear_OCP_fault(i);
     }
 
     if ((bits & CONTROL_PEND_RUN) != 0U)
     {
       if (snapshot.run)
       {
-        start_channel(slot, pwm);
+        start_channel(slot, i);
       }
       else
       {
-        pwm_stop(pwm);
+        pwm_stop(i);
       }
     }
     else if (snapshot.run && ((bits & CONTROL_PEND_DISRUPTIVE) != 0U))
     {
       /* Reconfigured a channel that was meant to be running: put it back. */
-      start_channel(slot, pwm);
+      start_channel(slot, i);
     }
   }
 
   return applied;
 }
 
-control_source_t control_last_source(pwm_channel_id_t channel)
+control_source_t control_last_source(uint32_t channel)
 {
   const control_channel_t *slot = channel_slot(channel);
 
   return (slot != NULL) ? slot->last_source : CONTROL_SRC_NONE;
 }
 
-uint32_t control_apply_failures(pwm_channel_id_t channel)
+uint32_t control_apply_failures(uint32_t channel)
 {
   const control_channel_t *slot = channel_slot(channel);
 

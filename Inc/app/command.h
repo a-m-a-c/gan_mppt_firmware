@@ -68,7 +68,7 @@
  *
  *   #cfg,<ch>,<state>,<freq_hz>,<duty_tenths>,<dead_ns>
  *                            one per channel; <ch> is 1..5 and <state> is the
- *                            pwm_state_t value from pwm_get_state()
+ *                            pwm_state_t value from the channel's pwm.op_state
  *   #ok,<echo>               command accepted
  *   #err,<reason>,<echo>     command rejected, or - for start/clear against
  *                            "all" - at least one channel refused it
@@ -119,7 +119,7 @@ void command_report_service(void);
  * or comment) and nothing should be sent. Never writes more than size bytes. */
 size_t command_execute(const char *line, char *out, size_t size);
 
-/* Writes the "#cfg" line for one channel (0..PWM_CHANNEL_COUNT-1), CRLF
+/* Writes the "#cfg" line for one channel (0..CHANNEL_COUNT-1), CRLF
  * terminated. Returns its length, or 0 if the index is out of range. */
 size_t command_format_config(uint32_t channel_index, char *out, size_t size);
 

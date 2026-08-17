@@ -21,31 +21,31 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 void HAL_HRTIM_Fault1Callback(HRTIM_HandleTypeDef *hhrtim)
 {
   UNUSED(hhrtim);
-  pwm_OCP_fault(PWM_CHANNEL_A);
+  pwm_OCP_fault(CHANNEL_A);
 }
 
 void HAL_HRTIM_Fault2Callback(HRTIM_HandleTypeDef *hhrtim)
 {
   UNUSED(hhrtim);
-  pwm_OCP_fault(PWM_CHANNEL_B);
+  pwm_OCP_fault(CHANNEL_B);
 }
 
 void HAL_HRTIM_Fault3Callback(HRTIM_HandleTypeDef *hhrtim)
 {
   UNUSED(hhrtim);
-  pwm_OCP_fault(PWM_CHANNEL_C);
+  pwm_OCP_fault(CHANNEL_C);
 }
 
 void HAL_HRTIM_Fault4Callback(HRTIM_HandleTypeDef *hhrtim)
 {
   UNUSED(hhrtim);
-  pwm_OCP_fault(PWM_CHANNEL_D);
+  pwm_OCP_fault(CHANNEL_D);
 }
 
 void HAL_HRTIM_Fault5Callback(HRTIM_HandleTypeDef *hhrtim)
 {
   UNUSED(hhrtim);
-  pwm_OCP_fault(PWM_CHANNEL_E);
+  pwm_OCP_fault(CHANNEL_E);
 }
 
 /* UART5 host link, receive and transmit. This one overrides the startup file's

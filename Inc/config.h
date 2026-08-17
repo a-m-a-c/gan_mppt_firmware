@@ -22,6 +22,19 @@
  * No includes, no types, no logic. Just numbers, so this header can be pulled
  * into anything without dragging dependencies along with it. */
 
+/* ========================== Channels ======================== */
+
+/* Five converter channels, A-E, fixed by the board. Plain defines rather than
+ * an enum: an enum bought nothing worth a cast on every loop bound and every
+ * index, because C converts int and enum freely and the count can never
+ * change. A channel id is a uint32_t. */
+#define CHANNEL_A     0U
+#define CHANNEL_B     1U
+#define CHANNEL_C     2U
+#define CHANNEL_D     3U
+#define CHANNEL_E     4U
+#define CHANNEL_COUNT 5U
+
 /* =========================== PWM =========================== */
 
 /* Where a channel starts before anything reconfigures it.
@@ -64,11 +77,25 @@
 
 /* =========================== LEDs ========================== */
 
-/* Drive polarity: 1 = a high pin lights the LED, 0 = a low pin does. The two
- * groups sit on different circuits, hence the two knobs. This is the only
- * place either is decided - flipping one inverts every line in its group. */
-#define LED_TOG_ACTIVE_HIGH    0 /* LED_TOG_1..5, the per-channel lines */
-#define LED_STATUS_ACTIVE_HIGH 1 /* LED_ACTIVE, LED_ERR, LED_OUT_CONN */
+/* Drive polarity is not here. It follows from the board and can never change
+ * without a respin, so it is written into each setter in led.c - per-channel
+ * lines light LOW, status lines light HIGH. See .agents/hardware.md. */
+
+/* Start-up lamp test: walks one lit LED along all eight lines so every one is
+ * seen to work, and gives the board a visible "I am alive and not yet
+ * switching" state. Each step turns the next line on and the previous one off,
+ * so 100 ms a step over 8 lines is an 800 ms sweep and 5 s is a little over
+ * six passes - long enough to catch a dead line by eye, short enough that
+ * nobody waits on it. */
+#define LED_SEQUENCE_MS      5000U
+#define LED_SEQUENCE_STEP_MS 100U
+
+/* Then all eight flash together this many times, at the same 100 ms step, to
+ * mark the end of the sequence. One on plus one off is two steps, so 5 flashes
+ * is 1 s. LED_BLINK_MS is derived rather than written out, so changing the
+ * count cannot leave a stale duration behind. */
+#define LED_BLINK_COUNT 5U
+#define LED_BLINK_MS    (2U * LED_BLINK_COUNT * LED_SEQUENCE_STEP_MS)
 
 /* LED_OUT_CONN lights when the bus is up, i.e. a battery is connected. Two
  * thresholds rather than one so the LED does not chatter when the bus sits

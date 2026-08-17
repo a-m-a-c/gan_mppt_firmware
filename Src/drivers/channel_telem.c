@@ -3,15 +3,6 @@
 #include "i2c.h"
 #include "main.h"
 
-/* Board wiring, common to all 10 sensors. TELEM_MAX_CURRENT_A sits just
- * under the +/-54.6 A that ADCRANGE=0 can represent across 3 mOhm. */
-#define TELEM_SHUNT_OHMS    0.003f
-#define TELEM_MAX_CURRENT_A 50.0f
-
-/* Alongside UART5, below the priority-0 OVP/OCP fault vectors. */
-#define TELEM_IRQ_PRIORITY 5U
-
-/* 7-bit I2C addresses - must match each sensor's A0/A1 strapping. */
 #define TELEM_ADDR_A_IN  0x40U
 #define TELEM_ADDR_A_OUT 0x41U
 #define TELEM_ADDR_B_IN  0x42U
@@ -22,9 +13,12 @@
 #define TELEM_ADDR_D_OUT 0x47U
 #define TELEM_ADDR_E_IN  0x48U
 #define TELEM_ADDR_E_OUT 0x49U
+#define TELEM_SHUNT_OHMS    0.003f
+#define TELEM_MAX_CURRENT_A 50.0f
+#define TELEM_IRQ_PRIORITY 5U
 
 telem_channel_t telem_a = {
-    .number = PWM_CHANNEL_A,
+    .number = CHANNEL_A,
     .input = {.i2c = &hi2c1, .address = TELEM_ADDR_A_IN,
               .shunt_ohms = TELEM_SHUNT_OHMS, .max_current_a = TELEM_MAX_CURRENT_A},
     .output = {.i2c = &hi2c1, .address = TELEM_ADDR_A_OUT,
@@ -32,7 +26,7 @@ telem_channel_t telem_a = {
 };
 
 telem_channel_t telem_b = {
-    .number = PWM_CHANNEL_B,
+    .number = CHANNEL_B,
     .input = {.i2c = &hi2c1, .address = TELEM_ADDR_B_IN,
               .shunt_ohms = TELEM_SHUNT_OHMS, .max_current_a = TELEM_MAX_CURRENT_A},
     .output = {.i2c = &hi2c1, .address = TELEM_ADDR_B_OUT,
@@ -40,7 +34,7 @@ telem_channel_t telem_b = {
 };
 
 telem_channel_t telem_c = {
-    .number = PWM_CHANNEL_C,
+    .number = CHANNEL_C,
     .input = {.i2c = &hi2c1, .address = TELEM_ADDR_C_IN,
               .shunt_ohms = TELEM_SHUNT_OHMS, .max_current_a = TELEM_MAX_CURRENT_A},
     .output = {.i2c = &hi2c1, .address = TELEM_ADDR_C_OUT,
@@ -48,7 +42,7 @@ telem_channel_t telem_c = {
 };
 
 telem_channel_t telem_d = {
-    .number = PWM_CHANNEL_D,
+    .number = CHANNEL_D,
     .input = {.i2c = &hi2c1, .address = TELEM_ADDR_D_IN,
               .shunt_ohms = TELEM_SHUNT_OHMS, .max_current_a = TELEM_MAX_CURRENT_A},
     .output = {.i2c = &hi2c1, .address = TELEM_ADDR_D_OUT,
@@ -56,21 +50,21 @@ telem_channel_t telem_d = {
 };
 
 telem_channel_t telem_e = {
-    .number = PWM_CHANNEL_E,
+    .number = CHANNEL_E,
     .input = {.i2c = &hi2c1, .address = TELEM_ADDR_E_IN,
               .shunt_ohms = TELEM_SHUNT_OHMS, .max_current_a = TELEM_MAX_CURRENT_A},
     .output = {.i2c = &hi2c1, .address = TELEM_ADDR_E_OUT,
                .shunt_ohms = TELEM_SHUNT_OHMS, .max_current_a = TELEM_MAX_CURRENT_A},
 };
 
-static bool channel_is_valid(const telem_channel_t *t)
+static bool telem_is_valid(const telem_channel_t *channel)
 {
-  return (t != NULL) && (t->number < PWM_CHANNEL_COUNT);
+  return (channel != NULL) && (channel->number < CHANNEL_COUNT);
 }
 
-bool telem_init(telem_channel_t *t)
+bool telem_init(telem_channel_t *channel)
 {
-  if (!channel_is_valid(t))
+  if (!telem_is_valid(channel))
   {
     return false;
   }
@@ -78,15 +72,15 @@ bool telem_init(telem_channel_t *t)
   /* ina228_init() is blocking, and the sequencer's interrupt-driven transfers
      would fight it for the handle. The vectors are enabled once, after the
      last channel has been initialised - see telem_start_sweeps(). */
-  bool ok = ina228_init(&t->input);
-  ok = ina228_init(&t->output) && ok;
+  bool ok = ina228_init(&channel->input);
+  ok = ina228_init(&channel->output) && ok;
 
-  t->history_head = 0U;
-  t->history_count = 0U;
-  t->valid = ok;
+  channel->history_head = 0U;
+  channel->history_count = 0U;
+  channel->valid = ok;
   if (!ok)
   {
-    t->error_count++;
+    channel->error_count++;
   }
   return ok;
 }
@@ -123,7 +117,7 @@ static bool telem_commit(telem_channel_t *t, telem_sample_t *sample, bool ok)
 
 bool telem_update(telem_channel_t *t)
 {
-  if (!channel_is_valid(t))
+  if (!telem_is_valid(t))
   {
     return false;
   }
@@ -169,7 +163,7 @@ typedef enum
   TELEM_SEQ_RECOVER
 } telem_seq_state_t;
 
-static telem_channel_t *const telem_channels[PWM_CHANNEL_COUNT] = {
+static telem_channel_t *const telem_channels[CHANNEL_COUNT] = {
     &telem_a, &telem_b, &telem_c, &telem_d, &telem_e};
 
 static struct
@@ -240,7 +234,7 @@ static void telem_next_channel(void)
   telem_seq.working_ok = true;
   telem_seq.channel++;
 
-  if (telem_seq.channel < (uint32_t)PWM_CHANNEL_COUNT)
+  if (telem_seq.channel < CHANNEL_COUNT)
   {
     telem_seq.state = TELEM_SEQ_BUSY;
     telem_start_step();
@@ -418,7 +412,7 @@ uint32_t telem_sweep_age_ms(void)
 
 bool telem_history_get(const telem_channel_t *t, uint32_t age, telem_sample_t *out)
 {
-  if (!channel_is_valid(t) || (out == NULL) || (age >= t->history_count))
+  if (!telem_is_valid(t) || (out == NULL) || (age >= t->history_count))
   {
     return false;
   }

@@ -35,14 +35,14 @@
    not for control flow. */
 #define COMMAND_ECHO_MAX 48
 
-#define COMMAND_ALL_CHANNELS ((1U << (uint32_t)PWM_CHANNEL_COUNT) - 1U)
+#define COMMAND_ALL_CHANNELS ((1U << CHANNEL_COUNT) - 1U)
 
 /* Reply buffer: "#err,<reason>," plus a 47-char echo and CRLF fits in 96. */
 #define COMMAND_REPLY_MAX 96
 
 /* "#cfg,5,3,800000,900,300\r\n" is 25 bytes; 32 leaves room to add a field. */
 #define COMMAND_CFG_MAX      32
-#define COMMAND_CFG_SET_MAX  (COMMAND_CFG_MAX * (uint32_t)PWM_CHANNEL_COUNT)
+#define COMMAND_CFG_SET_MAX  (COMMAND_CFG_MAX * CHANNEL_COUNT)
 
 /* Worst telemetry line: 10-char tick, mask, 5-char vbus, then 20 fields that
    can each reach "-102400" (read_reg20 sign-extends to +/-102.4 V), plus CRLF
@@ -168,12 +168,12 @@ static bool parse_channels(const token_t *token, uint32_t *mask)
   }
 
   char c = lower(token->text[0]);
-  if ((c >= 'a') && (c < (char)('a' + (int)PWM_CHANNEL_COUNT)))
+  if ((c >= 'a') && (c < (char)('a' + (int)CHANNEL_COUNT)))
   {
     *mask = 1U << (uint32_t)(c - 'a');
     return true;
   }
-  if ((c >= '1') && (c < (char)('1' + (int)PWM_CHANNEL_COUNT)))
+  if ((c >= '1') && (c < (char)('1' + (int)CHANNEL_COUNT)))
   {
     *mask = 1U << (uint32_t)(c - '1');
     return true;
@@ -235,14 +235,14 @@ static size_t reply_err(char *out, size_t size, const char *reason, const char *
 static size_t reply_iind(char *out, size_t size)
 {
   return reply_length(snprintf(out, size, "#iind,%u,%u,%lu,%u,%u,%u,%u,%u\r\n",
-                               (unsigned)iind_state(PWM_CHANNEL_A),
+                               (unsigned)iind_state(CHANNEL_A),
                                (unsigned)iind_sample_point(),
                                (unsigned long)iind_sample_id(),
-                               (unsigned)iind_zero(PWM_CHANNEL_A),
-                               (unsigned)iind_zero(PWM_CHANNEL_B),
-                               (unsigned)iind_zero(PWM_CHANNEL_C),
-                               (unsigned)iind_zero(PWM_CHANNEL_D),
-                               (unsigned)iind_zero(PWM_CHANNEL_E)),
+                               (unsigned)iind_zero(CHANNEL_A),
+                               (unsigned)iind_zero(CHANNEL_B),
+                               (unsigned)iind_zero(CHANNEL_C),
+                               (unsigned)iind_zero(CHANNEL_D),
+                               (unsigned)iind_zero(CHANNEL_E)),
                       size);
 }
 
@@ -300,11 +300,11 @@ static size_t reply_adc(char *out, size_t size)
 {
   return reply_length(snprintf(out, size, "#adc,%lu,%lu,%lu,%lu,%lu,%lu,%u,%u,%lu\r\n",
                                (unsigned long)analog_vbus_pin_mv(),
-                               (unsigned long)analog_ntc_pin_mv(PWM_CHANNEL_A),
-                               (unsigned long)analog_ntc_pin_mv(PWM_CHANNEL_B),
-                               (unsigned long)analog_ntc_pin_mv(PWM_CHANNEL_C),
-                               (unsigned long)analog_ntc_pin_mv(PWM_CHANNEL_D),
-                               (unsigned long)analog_ntc_pin_mv(PWM_CHANNEL_E),
+                               (unsigned long)analog_ntc_pin_mv(CHANNEL_A),
+                               (unsigned long)analog_ntc_pin_mv(CHANNEL_B),
+                               (unsigned long)analog_ntc_pin_mv(CHANNEL_C),
+                               (unsigned long)analog_ntc_pin_mv(CHANNEL_D),
+                               (unsigned long)analog_ntc_pin_mv(CHANNEL_E),
                                (unsigned)analog_vrefint_measured(),
                                (unsigned)analog_vrefint_factory(),
                                (unsigned long)analog_ntc5_via_adc2_mv()),
@@ -317,9 +317,9 @@ static size_t reply_adc(char *out, size_t size)
    whole batch later in this same pass. */
 static void apply_set(uint32_t mask, const token_t *parameter, uint32_t value)
 {
-  for (uint32_t i = 0U; i < (uint32_t)PWM_CHANNEL_COUNT; i++)
+  for (uint32_t i = 0U; i < CHANNEL_COUNT; i++)
   {
-    pwm_channel_id_t channel = (pwm_channel_id_t)i;
+    uint32_t channel = i;
 
     if ((mask & (1U << i)) == 0U)
     {
@@ -396,7 +396,7 @@ static size_t handle_set(const token_t *tokens, size_t count, char *out, size_t 
 
 /* init/start/stop take no value, so they share one shape: walk the mask and
    report whether every channel accepted. "start" is the only one that can be
-   refused, and control_request_run() answers that from pwm_get_state() without
+   refused, and control_request_run() answers that from op_state without
    waiting for the apply - so this reply means the same as it always did. */
 static size_t handle_channel_verb(const token_t *tokens, size_t count, char *out, size_t size,
                                   const char *echo)
@@ -413,9 +413,9 @@ static size_t handle_channel_verb(const token_t *tokens, size_t count, char *out
     return reply_err(out, size, "badchannel", echo);
   }
 
-  for (uint32_t i = 0U; i < (uint32_t)PWM_CHANNEL_COUNT; i++)
+  for (uint32_t i = 0U; i < CHANNEL_COUNT; i++)
   {
-    pwm_channel_id_t channel = (pwm_channel_id_t)i;
+    uint32_t channel = i;
 
     if ((mask & (1U << i)) == 0U)
     {
@@ -461,9 +461,9 @@ static size_t handle_clear(const token_t *tokens, size_t count, char *out, size_
     return reply_err(out, size, "badchannel", echo);
   }
 
-  for (uint32_t i = 0U; i < (uint32_t)PWM_CHANNEL_COUNT; i++)
+  for (uint32_t i = 0U; i < CHANNEL_COUNT; i++)
   {
-    pwm_channel_id_t channel = (pwm_channel_id_t)i;
+    uint32_t channel = i;
 
     if ((mask & (1U << i)) != 0U)
     {
@@ -529,15 +529,15 @@ size_t command_execute(const char *line, char *out, size_t size)
 
 size_t command_format_config(uint32_t channel_index, char *out, size_t size)
 {
-  pwm_channel_t *channel;
+  channel_t *channel;
   int written;
 
-  if ((out == NULL) || (channel_index >= (uint32_t)PWM_CHANNEL_COUNT))
+  if ((out == NULL) || (channel_index >= CHANNEL_COUNT))
   {
     return 0U;
   }
 
-  channel = pwm_channel((pwm_channel_id_t)channel_index);
+  channel = channel_by_id(channel_index);
   if (channel == NULL)
   {
     return 0U;
@@ -545,10 +545,10 @@ size_t command_format_config(uint32_t channel_index, char *out, size_t size)
 
   written = snprintf(out, size, "#cfg,%lu,%u,%lu,%u,%u\r\n",
                      (unsigned long)(channel_index + 1U),
-                     (unsigned)pwm_get_state(channel),
-                     (unsigned long)channel->frequency,
-                     (unsigned)channel->duty_cycle,
-                     (unsigned)channel->dead_time);
+                     (unsigned)channel->pwm.op_state,
+                     (unsigned long)channel->pwm.frequency_hz,
+                     (unsigned)channel->pwm.duty_applied,
+                     (unsigned)channel->pwm.dead_time_ns);
 
   return reply_length(written, size);
 }
@@ -587,13 +587,13 @@ size_t command_format_telemetry(char *out, size_t size)
 
   /* Bits 0..4 are the INA228 pairs, 5..9 the inductor sensors - see command.h.
      One loop so the two halves cannot drift apart. */
-  for (uint32_t i = 0U; i < (uint32_t)PWM_CHANNEL_COUNT; i++)
+  for (uint32_t i = 0U; i < CHANNEL_COUNT; i++)
   {
     mask |= channels[i]->valid ? (1U << i) : 0U;
 
-    if (iind_state((pwm_channel_id_t)i) == IIND_STATE_RUNNING)
+    if (iind_state(i) == IIND_STATE_RUNNING)
     {
-      mask |= 1U << ((uint32_t)PWM_CHANNEL_COUNT + i);
+      mask |= 1U << (CHANNEL_COUNT + i);
     }
   }
 
@@ -610,7 +610,7 @@ size_t command_format_telemetry(char *out, size_t size)
   /* Every append is checked rather than accumulated blindly: snprintf returns
      the length it *would* have written, so adding that unchecked would push
      offset past the buffer and underflow the remaining-size subtraction. */
-  for (uint32_t i = 0U; i < (uint32_t)PWM_CHANNEL_COUNT; i++)
+  for (uint32_t i = 0U; i < CHANNEL_COUNT; i++)
   {
     written = append_channel(&out[offset], size - offset, channels[i]);
     if (written == 0U)
@@ -689,7 +689,7 @@ static void report_config(void)
     return;
   }
 
-  for (uint32_t i = 0U; i < (uint32_t)PWM_CHANNEL_COUNT; i++)
+  for (uint32_t i = 0U; i < CHANNEL_COUNT; i++)
   {
     (void)serial_write(line, command_format_config(i, line, sizeof(line)));
   }

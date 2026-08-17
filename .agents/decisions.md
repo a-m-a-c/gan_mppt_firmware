@@ -594,3 +594,102 @@ current is measured against them.
 **Status:** firmware and both host tools build and parse; page structure and
 the `#iind` path verified against a live server. **Not verified on hardware** —
 and cannot be until the CubeMX changes land.
+
+## 030 — The control stack: one gate, one regulator slot  (2026-08-16)
+**Decision:** Three layers above the driver. `regulate.c` holds per-channel mode
+(MANUAL / CV / MPPT), setpoint and state machine, and picks a duty. A **duty
+gate** inside `control.c` slew-limits and ceiling-clamps *every* duty from every
+source. `control.c` then applies it, unchanged as the only caller of `pwm_*()`.
+`mppt.c` becomes a **pure function** of measurements → next setpoint: no
+hardware, no globals, testable on the host.
+**Why one gate:** [009](#) (dynamic ceiling) and [012](#) (ramp rate) were both
+"where does this live" questions with the same answer. Putting them on the one
+path every source already funnels through means there is a single place to
+audit, and the GUI's apply-as-it-moves duty slider stops being a step input.
+**Slew rate: 50 %/s**, deliberately lax as a starting point, to be tightened
+from bench observation. Note it is 0.5 tenths per millisecond — below one unit
+per tick, so an incrementing limiter truncates to zero and never moves. Compute
+the allowance from an anchor instead: `allowed = anchor ± rate × elapsed_ms /
+1000`. Drift-free and no accumulator. Full 0 → 85 % sweep is 1.7 s.
+**CV regulates the bus, not the input**, and is a bench mode for developing
+control algorithms on a single channel into a resistive or electronic load.
+Two consequences fall out, and the first is a real hole:
+- **The dynamic ceiling degenerates in CV.** `D_max = 1 − Vin/Vbus + margin`
+  assumes Vbus is *imposed* by a battery. With no battery, Vbus is whatever the
+  converter just made: raise D → Vout rises → ceiling rises → more D allowed.
+  Positive feedback on the limiter; it stops limiting and starts following.
+  **Fix, and it covers both modes: `Vbus_ref` is the voltage the channel is
+  trying to reach, never the voltage it has made.** MPPT → measured bus; CV →
+  the setpoint. The ceiling then pins at the duty needed to reach the setpoint
+  plus margin.
+- **The bench mode is the more dangerous one.** The Vin loop fails benignly:
+  runaway duty collapses the panel, and Isc (8.66 A) is below the 12 A OCP, so
+  the array cannot sustain an overload. Bus CV has no such backstop — a sign
+  error walks duty to the static 85 % ceiling with only OVP at 55 V to catch it.
+  So CV needs a hard setpoint cap well under 55 V and a cutback branch
+  independent of the integrator.
+**Rejected — CV and MPPT as one shared inner loop.** They looked like the same
+loop (MPPT = CV with a moving setpoint) while CV was assumed to regulate the
+*input*. Bus CV breaks it: opposite sign, different measured quantity. What
+survives is the *slot* — same mode enum, same setpoint, same gate, same state
+machine, two regulator functions.
+**Rejected — P&O perturbing duty directly.** Less code and no CV. Vin is
+monotonic in D through and past the MPP, which direct-duty P&O does not enjoy,
+and direct-duty will walk into panel collapse with only the ramp limiter and OCP
+catching it.
+**Timing, and it bounds everything:** the INA228s produce an averaged set every
+~34 ms and `TELEM_SWEEP_PERIOD_MS` is 40, so **all closed-loop control is capped
+at 25 Hz.** Inner regulator one step per sweep; MPPT perturbation every ~10
+sweeps ≈ 2.5 Hz. Ample for MPPT, fine for CV as a *setpoint tracker* — it is not
+a transient-rejecting regulator and must not be described as one. `iind` does
+not help; it measures inductor current, not Vin.
+**Architectural constraint, restated because it now binds:** nothing in the
+control path may delay the OVP interrupt. All loop maths stays in the main loop,
+integer-only, outside critical sections. OCP and OVP are the only two layers of
+the seven that are not software in `app_loop()`, and they must never be starved.
+**Status:** designed, agreed in conversation. **Not started.**
+
+## 031 — The system FSM decides arming, and nothing else  (2026-08-16)
+**Decision:** `INIT → CHECK → STANDBY → RUN`, plus `FAULT` on a latched OVP.
+`STANDBY` is the dev mode. **CHECK auto-advances to RUN unless a `hold` command
+lands during the window.**
+**Why a system FSM exists at all** — the question left open in
+[project_plan.md](project_plan.md) since 2026-08-15. "Normal operation vs a
+serial dev mode" sounds like two parallel universes, but listing what actually
+differs collapses it: channels don't auto-start, channels don't auto-hand-over
+to MPPT, setpoints are set by hand. The third is already the per-channel mode
+axis; the first two are one bit — **is the autonomous sequencer allowed to
+run?** That bit is genuinely not a per-channel concern, and it is all the
+system FSM decides.
+**Why RUN is the default:** the failure *direction*. If dev is the default, the
+silent failure is "the array produces nothing" — a car that does not drive, with
+no error anywhere. If RUN is the default, the silent failure is "it works". Do
+nothing, get power.
+**Rejected — inferring dev mode from serial activity.** The link survives into
+production, so an attached logger, a stray byte or a reconnecting host would
+silently inhibit power generation. Presence is not intent.
+**Rejected — a hardware strap.** Deterministic and immune to software bugs, and
+the conventional answer, but no spare pin is allocated and the board is built.
+**Rejected — a persisted flag.** A board left in dev mode boots into it weeks
+later with no indication.
+**CHECK exits on a checklist, not a clock:** one good INA228 sweep, a settled
+bus reading, fault lines sampled at rest so a stuck-asserted fault is known
+*before* anything starts, and the `iind` zero calibration — which 028 requires
+be done while every channel is stopped, and CHECK is the one moment that is
+guaranteed true. A timeout is the backstop. Arming additionally requires the bus
+to be present: no battery, nothing to charge, so stay in STANDBY and retry.
+**No auto-rearm timeout, and this one is not negotiable.** A board sitting in
+`hold` with a scope probe on the power stage must not decide on its own to start
+switching. It is a one-line temptation and it is the worst failure in the
+design. The mitigation for "left in hold accidentally" is to make hold **loud**
+— a distinct LED pattern and a line in the periodic report — never to make it
+expire.
+**Build order:** `INIT`/`CHECK`/`STANDBY` are worth building early; they give
+the `iind` calibration a legitimate home and make "nothing is switching" an
+explicit state rather than an accident. `RUN` stays a stub until the converter
+works, since tuning a sequencer against a stage that does not run yet is
+guesswork.
+**Open:** whether `hold` is accepted at any time or only in CHECK/RUN, and
+whether the sequencer retries a faulted channel. Both in
+[project_plan.md](project_plan.md).
+**Status:** designed, agreed in conversation. **Not started.**

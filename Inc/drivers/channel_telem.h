@@ -1,17 +1,3 @@
-/**
-  ******************************************************************************
-  * @file    channel_telem.h
-  * @author  Angus Macdonald
-  * @brief   Per-channel converter telemetry (paired INA228 sensors).
-  ******************************************************************************
-  * @attention
-  *
-  * This software is licensed under terms that can be found in the LICENSE file
-  * in the root directory of this software component.
-  * If no LICENSE file comes with this software, it is provided AS-IS.
-  *
-  ******************************************************************************
-  */
 #ifndef CHANNEL_TELEM_H
 #define CHANNEL_TELEM_H
 
@@ -20,8 +6,11 @@
 #include "ina228.h"
 #include "pwm.h"
 
+
 #define TELEM_HISTORY_DEPTH 32U
 
+
+// A sample of the data for a given channel.
 typedef struct
 {
   uint32_t tick_ms; /* HAL_GetTick() when the sample was taken */
@@ -31,12 +20,10 @@ typedef struct
   float iout_a;
 } telem_sample_t;
 
-/* Telemetry state for one converter channel: an INA228 on the input side and
- * one on the output side. telem_update() refreshes `latest` and pushes it
- * into `history` (ring buffer, newest first via telem_history_get). */
+// Representing a telemetry channel.
 typedef struct
 {
-  pwm_channel_id_t number;
+  uint32_t number;
   ina228_t input;
   ina228_t output;
   telem_sample_t latest;
@@ -47,7 +34,7 @@ typedef struct
   uint32_t history_count;
 } telem_channel_t;
 
-/* The 5 converter channels, defined in channel_telem.c. */
+// Channel information.
 extern telem_channel_t telem_a;
 extern telem_channel_t telem_b;
 extern telem_channel_t telem_c;

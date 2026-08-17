@@ -10,21 +10,8 @@
    HRTIM_OUTPUT_TC1 | HRTIM_OUTPUT_TC2 | HRTIM_OUTPUT_TD1 | HRTIM_OUTPUT_TD2 | \
    HRTIM_OUTPUT_TE1 | HRTIM_OUTPUT_TE2)
 
-#define CHANNEL_DEFAULTS(id)                                                \
-  {.number = (id), .frequency = PWM_DEFAULT_FREQUENCY_HZ,                   \
-   .duty_cycle = PWM_DEFAULT_DUTY_CYCLE, .dead_time = PWM_DEFAULT_DEAD_TIME_NS}
-
-pwm_channel_t channel_a = CHANNEL_DEFAULTS(PWM_CHANNEL_A);
-pwm_channel_t channel_b = CHANNEL_DEFAULTS(PWM_CHANNEL_B);
-pwm_channel_t channel_c = CHANNEL_DEFAULTS(PWM_CHANNEL_C);
-pwm_channel_t channel_d = CHANNEL_DEFAULTS(PWM_CHANNEL_D);
-pwm_channel_t channel_e = CHANNEL_DEFAULTS(PWM_CHANNEL_E);
-
-volatile bool pwm_OVP_fault_latched = false;
-
-/* Fixed per-channel wiring: HRTIM timer, output pair, and the OCP fault line
-   (FLT1->A ... FLT5->E) with its GPIO for reading the live pin level. */
 typedef struct {
+  channel_t *data;
   uint32_t timer_index;
   uint32_t timer_id;
   uint32_t output1;
@@ -37,92 +24,108 @@ typedef struct {
   uint16_t fault_pin;
 } channel_hw_t;
 
-/* Fields in struct order: index, id, out1, out2, update, fault_en, fault_irq,
-   fault_flag, port, pin. */
-static const channel_hw_t channel_hardware[PWM_CHANNEL_COUNT] = {
-    [PWM_CHANNEL_A] = {HRTIM_TIMERINDEX_TIMER_A, HRTIM_TIMERID_TIMER_A, HRTIM_OUTPUT_TA1, HRTIM_OUTPUT_TA2, HRTIM_TIMERUPDATE_A,
-                       HRTIM_TIMFAULTENABLE_FAULT1, HRTIM_IT_FLT1, HRTIM_FLAG_FLT1, GPIOA, GPIO_PIN_15},
-    [PWM_CHANNEL_B] = {HRTIM_TIMERINDEX_TIMER_B, HRTIM_TIMERID_TIMER_B, HRTIM_OUTPUT_TB1, HRTIM_OUTPUT_TB2, HRTIM_TIMERUPDATE_B,
-                       HRTIM_TIMFAULTENABLE_FAULT2, HRTIM_IT_FLT2, HRTIM_FLAG_FLT2, GPIOC, GPIO_PIN_11},
-    [PWM_CHANNEL_C] = {HRTIM_TIMERINDEX_TIMER_C, HRTIM_TIMERID_TIMER_C, HRTIM_OUTPUT_TC1, HRTIM_OUTPUT_TC2, HRTIM_TIMERUPDATE_C,
-                       HRTIM_TIMFAULTENABLE_FAULT3, HRTIM_IT_FLT3, HRTIM_FLAG_FLT3, GPIOD, GPIO_PIN_4},
-    [PWM_CHANNEL_D] = {HRTIM_TIMERINDEX_TIMER_D, HRTIM_TIMERID_TIMER_D, HRTIM_OUTPUT_TD1, HRTIM_OUTPUT_TD2, HRTIM_TIMERUPDATE_D,
-                       HRTIM_TIMFAULTENABLE_FAULT4, HRTIM_IT_FLT4, HRTIM_FLAG_FLT4, GPIOB, GPIO_PIN_3},
-    [PWM_CHANNEL_E] = {HRTIM_TIMERINDEX_TIMER_E, HRTIM_TIMERID_TIMER_E, HRTIM_OUTPUT_TE1, HRTIM_OUTPUT_TE2, HRTIM_TIMERUPDATE_E,
-                       HRTIM_TIMFAULTENABLE_FAULT5, HRTIM_IT_FLT5, HRTIM_FLAG_FLT5, GPIOG, GPIO_PIN_10}};
+static const channel_hw_t hw_a = {
+    .data = &chan_a,
+    .timer_index = HRTIM_TIMERINDEX_TIMER_A,
+    .timer_id = HRTIM_TIMERID_TIMER_A,
+    .output1 = HRTIM_OUTPUT_TA1,
+    .output2 = HRTIM_OUTPUT_TA2,
+    .timer_update = HRTIM_TIMERUPDATE_A,
+    .fault_enable = HRTIM_TIMFAULTENABLE_FAULT1,
+    .fault_irq = HRTIM_IT_FLT1,
+    .fault_flag = HRTIM_FLAG_FLT1,
+    .fault_port = GPIOA,
+    .fault_pin = GPIO_PIN_15,
+};
 
-static pwm_channel_t *const channels[PWM_CHANNEL_COUNT] = {
-    &channel_a, &channel_b, &channel_c, &channel_d, &channel_e};
+static const channel_hw_t hw_b = {
+    .data = &chan_b,
+    .timer_index = HRTIM_TIMERINDEX_TIMER_B,
+    .timer_id = HRTIM_TIMERID_TIMER_B,
+    .output1 = HRTIM_OUTPUT_TB1,
+    .output2 = HRTIM_OUTPUT_TB2,
+    .timer_update = HRTIM_TIMERUPDATE_B,
+    .fault_enable = HRTIM_TIMFAULTENABLE_FAULT2,
+    .fault_irq = HRTIM_IT_FLT2,
+    .fault_flag = HRTIM_FLAG_FLT2,
+    .fault_port = GPIOC,
+    .fault_pin = GPIO_PIN_11,
+};
 
-pwm_channel_t *pwm_channel(pwm_channel_id_t id) {
-  if ((uint32_t)id >= (uint32_t)PWM_CHANNEL_COUNT) {
-    return NULL;
-  }
-  return channels[(uint32_t)id];
+static const channel_hw_t hw_c = {
+    .data = &chan_c,
+    .timer_index = HRTIM_TIMERINDEX_TIMER_C,
+    .timer_id = HRTIM_TIMERID_TIMER_C,
+    .output1 = HRTIM_OUTPUT_TC1,
+    .output2 = HRTIM_OUTPUT_TC2,
+    .timer_update = HRTIM_TIMERUPDATE_C,
+    .fault_enable = HRTIM_TIMFAULTENABLE_FAULT3,
+    .fault_irq = HRTIM_IT_FLT3,
+    .fault_flag = HRTIM_FLAG_FLT3,
+    .fault_port = GPIOD,
+    .fault_pin = GPIO_PIN_4,
+};
+
+static const channel_hw_t hw_d = {
+    .data = &chan_d,
+    .timer_index = HRTIM_TIMERINDEX_TIMER_D,
+    .timer_id = HRTIM_TIMERID_TIMER_D,
+    .output1 = HRTIM_OUTPUT_TD1,
+    .output2 = HRTIM_OUTPUT_TD2,
+    .timer_update = HRTIM_TIMERUPDATE_D,
+    .fault_enable = HRTIM_TIMFAULTENABLE_FAULT4,
+    .fault_irq = HRTIM_IT_FLT4,
+    .fault_flag = HRTIM_FLAG_FLT4,
+    .fault_port = GPIOB,
+    .fault_pin = GPIO_PIN_3,
+};
+
+static const channel_hw_t hw_e = {
+    .data = &chan_e,
+    .timer_index = HRTIM_TIMERINDEX_TIMER_E,
+    .timer_id = HRTIM_TIMERID_TIMER_E,
+    .output1 = HRTIM_OUTPUT_TE1,
+    .output2 = HRTIM_OUTPUT_TE2,
+    .timer_update = HRTIM_TIMERUPDATE_E,
+    .fault_enable = HRTIM_TIMFAULTENABLE_FAULT5,
+    .fault_irq = HRTIM_IT_FLT5,
+    .fault_flag = HRTIM_FLAG_FLT5,
+    .fault_port = GPIOG,
+    .fault_pin = GPIO_PIN_10,
+};
+
+// Channel hardware put in array for easy access
+static const channel_hw_t *const channel_hardware[CHANNEL_COUNT] = {
+    [CHANNEL_A] = &hw_a,
+    [CHANNEL_B] = &hw_b,
+    [CHANNEL_C] = &hw_c,
+    [CHANNEL_D] = &hw_d,
+    [CHANNEL_E] = &hw_e,
+};
+
+// Access channel hardware values using channel number.
+static const channel_hw_t *channel_hw(uint32_t channel) {
+  return channel_hardware[channel];
 }
 
-static const channel_hw_t *channel_hw(pwm_channel_id_t channel) {
-  return &channel_hardware[(uint32_t)channel];
+// Controls and updates the status of pwm in each channel.
+static void set_op_state(channel_t *ch, pwm_state_t op_state) {
+  ch->pwm.op_state = op_state;
+  ch->pwm.seq++;
 }
 
-static bool channel_is_valid(const pwm_channel_t *channel) {
-  if ((channel == NULL) || ((uint32_t)channel->number >= (uint32_t)PWM_CHANNEL_COUNT)) {
-    return false;
-  }
-  return channel == channels[(uint32_t)channel->number];
-}
-
-/* Sole writer of op_state - only ever UNINITIALIZED/STOPPED/RUNNING. Faults
-   live in the boolean flags and are surfaced by pwm_get_state(). */
-static void set_op_state(pwm_channel_t *channel, pwm_state_t op_state) {
-  channel->op_state = op_state;
-}
-
-pwm_state_t pwm_get_state(const pwm_channel_t *channel) {
-  if (!channel_is_valid(channel) || (channel->op_state == PWM_STATE_UNINITIALIZED)) {
-    return PWM_STATE_UNINITIALIZED;
-  }
-  if (channel->ocp_fault || pwm_OVP_fault_latched) {
-    return PWM_STATE_FAULTED;
-  }
-  return channel->op_state;
-}
 
 static uint32_t clamp(uint32_t value, uint32_t min, uint32_t max) {
-  return (value < min) ? min : ((value > max) ? max : value);
+  if (value < min) {
+    return min;
+  }
+  if (value > max) {
+    return max;
+  }
+  return value;
 }
 
-/* Truncates: actual frequency lands at or just above requested. */
-static uint32_t hz_to_period_ticks(uint32_t frequency_hz) {
-  return PWM_KERNEL_CLOCK_HZ / frequency_hz;
-}
-
-/* Rounds up: actual dead time is never shorter than requested. */
-static uint32_t ns_to_ticks(uint16_t nanoseconds) {
-  uint64_t ticks = (((uint64_t)nanoseconds * PWM_KERNEL_CLOCK_HZ) + 999999999ULL) / 1000000000ULL;
-  return (ticks == 0U) ? 1U : (uint32_t)ticks;
-}
-
-/* Smallest legal HRTIM compare value at prescaler DIV1: 3 periods of f_HRTIM,
-   i.e. 6.25 ns at 480 MHz. Zero is not legal and its behaviour is undefined -
-   plausibly leaving output1 permanently set, which with output1 driving the
-   control FET is a continuous inductor short. Never program below this. */
 #define PWM_MIN_COMPARE_TICKS 3U
-
-/* A 0% request lands on the floor above rather than on zero. The resulting
-   pulse is 3 ticks wide, and dead-time insertion delays output1's turn-on by
-   the rising dead time - itself never fewer than 3 ticks, since
-   PWM_MIN_DEAD_TIME_NS (5 ns) rounds up to 3 ticks at 480 MHz. So the pulse is
-   fully consumed and the control FET does not conduct at all, which is what
-   makes 0% the safe pass-through state a channel starts from.
-
-   Output1 being the control FET was confirmed on the bench 2026-08-15; the
-   safety of a 0% default rests on it. See .agents/hardware.md. */
-static uint32_t duty_to_compare_ticks(uint32_t period_ticks, uint16_t duty_tenths_pct) {
-  uint32_t duty = clamp(duty_tenths_pct, PWM_MIN_DUTY_CYCLE, PWM_MAX_DUTY_CYCLE);
-  uint32_t compare = (period_ticks * duty) / PWM_DUTY_SCALE;
-  return (compare < PWM_MIN_COMPARE_TICKS) ? PWM_MIN_COMPARE_TICKS : compare;
-}
 
 static uint32_t enter_critical(void) {
   uint32_t primask = __get_PRIMASK();
@@ -167,58 +170,50 @@ static void all_channels_stop_hw(void) {
   CLEAR_BIT(hhrtim.Instance->sMasterRegs.MCR, ALL_TIMERS);
 }
 
-static void latch_OCP_fault(pwm_channel_t *channel, const channel_hw_t *hw) {
+static void latch_OCP_fault(const channel_hw_t *hw) {
+  channel_t *ch = hw->data;
+
   channel_stop_hw(hw);
-  channel->ocp_fault = true;
-  if (channel->op_state == PWM_STATE_RUNNING) {
-    set_op_state(channel, PWM_STATE_STOPPED);
+  ch->pwm.ocp_latched = true;
+  if (ch->pwm.op_state != PWM_STATE_UNINITIALIZED) {
+    set_op_state(ch, PWM_STATE_FAULTED);
   }
 }
 
 static void latch_OVP_fault(void) {
   all_channels_stop_hw();
-  pwm_OVP_fault_latched = true;
-  for (uint32_t i = 0U; i < (uint32_t)PWM_CHANNEL_COUNT; i++) {
-    if (channels[i]->op_state == PWM_STATE_RUNNING) {
-      set_op_state(channels[i], PWM_STATE_STOPPED);
+  sys.ovp_latched = true;
+  for (uint32_t i = 0U; i < CHANNEL_COUNT; i++) {
+    channel_t *ch = channel_hardware[i]->data;
+    if (ch->pwm.op_state != PWM_STATE_UNINITIALIZED) {
+      set_op_state(ch, PWM_STATE_FAULTED);
     }
   }
 }
 
-/* Latches whatever fault is present now (latched flag, live pin, or pending
-   flag - for either OVP or this channel's OCP). Returns true if any latched.
-   Call inside a critical section. */
-static bool latch_present_faults(pwm_channel_t *channel, const channel_hw_t *hw) {
-  bool ovp = pwm_OVP_fault_latched || ovp_is_active() || ovp_is_pending();
-  bool ocp = channel->ocp_fault || ocp_is_active(hw) || ocp_is_pending(hw);
+static bool latch_present_faults(const channel_hw_t *hw) {
+  bool ovp = sys.ovp_latched || ovp_is_active() || ovp_is_pending();
+  bool ocp = hw->data->pwm.ocp_latched || ocp_is_active(hw) || ocp_is_pending(hw);
   if (ovp) {
     latch_OVP_fault();
   }
   if (ocp) {
-    latch_OCP_fault(channel, hw);
+    latch_OCP_fault(hw);
   }
   return ovp || ocp;
 }
 
-void pwm_init(pwm_channel_t *channel) {
-  if (!channel_is_valid(channel)) {
-    return;
-  }
-  const channel_hw_t *hw = channel_hw(channel->number);
+void pwm_init(uint32_t channel) {
+  const channel_hw_t *hw = channel_hw(channel);
+  channel_t *ch = hw->data;
 
-  /* Never leave live outputs enabled across reconfiguration. A latched fault
-     is left untouched, so pwm_get_state() keeps reporting FAULTED. */
   pwm_stop(channel);
 
-  /* Duty is clamped here because pwm_set_duty_cycle() rejects (not clamps)
-     out-of-range values; the other setters clamp and write back themselves. */
-  channel->duty_cycle = (uint16_t)clamp(channel->duty_cycle, PWM_MIN_DUTY_CYCLE, PWM_MAX_DUTY_CYCLE);
-  pwm_set_frequency(channel, channel->frequency);
-  (void)pwm_set_duty_cycle(channel, channel->duty_cycle);
-  pwm_set_dead_time(channel, channel->dead_time);
+  ch->pwm.duty_applied = (uint16_t)clamp(ch->pwm.duty_applied, PWM_MIN_DUTY_CYCLE, PWM_MAX_DUTY_CYCLE);
+  pwm_set_frequency(channel, ch->pwm.frequency_hz);
+  (void)pwm_set_duty_cycle(channel, ch->pwm.duty_applied);
+  pwm_set_dead_time(channel, ch->pwm.dead_time_ns);
 
-  /* Output 1 set at period, reset at CMP1; output 2 is its dead-time
-     complement. FaultLevel INACTIVE forces both outputs off on a fault. */
   HRTIM_OutputCfgTypeDef output1_cfg = {0};
   output1_cfg.SetSource = HRTIM_OUTPUTSET_TIMPER;
   output1_cfg.ResetSource = HRTIM_OUTPUTRESET_TIMCMP1;
@@ -243,25 +238,29 @@ void pwm_init(pwm_channel_t *channel) {
   }
 
   uint32_t primask = enter_critical();
-  (void)latch_present_faults(channel, hw);
-  set_op_state(channel, PWM_STATE_STOPPED);
-  /* Valid state is in place before an already-pending fault IRQ can run. */
+  set_op_state(ch, PWM_STATE_STOPPED);
+  (void)latch_present_faults(hw);
   __HAL_HRTIM_ENABLE_IT(&hhrtim, hw->fault_irq);
   exit_critical(primask);
 }
 
-bool pwm_set_duty_cycle(pwm_channel_t *channel, uint16_t duty_cycle) {
-  if (!channel_is_valid(channel) || (duty_cycle < PWM_MIN_DUTY_CYCLE) || (duty_cycle > PWM_MAX_DUTY_CYCLE)) {
+bool pwm_set_duty_cycle(uint32_t channel, uint16_t duty_cycle) {
+  if ((duty_cycle < PWM_MIN_DUTY_CYCLE) || (duty_cycle > PWM_MAX_DUTY_CYCLE)) {
     return false;
   }
-  const channel_hw_t *hw = channel_hw(channel->number);
-  uint32_t period_ticks = hz_to_period_ticks(clamp(channel->frequency, PWM_MIN_FREQUENCY_HZ, PWM_MAX_FREQUENCY_HZ));
-  __HAL_HRTIM_SETCOMPARE(&hhrtim, hw->timer_index, HRTIM_COMPAREUNIT_1, duty_to_compare_ticks(period_ticks, duty_cycle));
-  channel->duty_cycle = duty_cycle;
+  const channel_hw_t *hw = channel_hw(channel);
+  channel_t *ch = hw->data;
+  uint32_t period_ticks = PWM_KERNEL_CLOCK_HZ / clamp(ch->pwm.frequency_hz, PWM_MIN_FREQUENCY_HZ, PWM_MAX_FREQUENCY_HZ);
+  uint32_t compare = (period_ticks * clamp(duty_cycle, PWM_MIN_DUTY_CYCLE, PWM_MAX_DUTY_CYCLE)) / PWM_DUTY_SCALE;
 
-  /* A running timer transfers the preloaded compare at the next period; a
-     stopped one needs an explicit transfer before it is started. */
-  if (channel->op_state != PWM_STATE_RUNNING) {
+  if (compare < PWM_MIN_COMPARE_TICKS) {
+    compare = PWM_MIN_COMPARE_TICKS;
+  }
+
+  __HAL_HRTIM_SETCOMPARE(&hhrtim, hw->timer_index, HRTIM_COMPAREUNIT_1, compare);
+  ch->pwm.duty_applied = duty_cycle;
+
+  if (ch->pwm.op_state != PWM_STATE_RUNNING) {
     if (HAL_HRTIM_SoftwareUpdate(&hhrtim, hw->timer_update) != HAL_OK) {
       Error_Handler();
     }
@@ -269,43 +268,49 @@ bool pwm_set_duty_cycle(pwm_channel_t *channel, uint16_t duty_cycle) {
   return true;
 }
 
-void pwm_set_dead_time(pwm_channel_t *channel, uint16_t dead_time) {
-  if (!channel_is_valid(channel)) {
-    return;
-  }
-  bool restart = channel->op_state == PWM_STATE_RUNNING;
+void pwm_set_dead_time(uint32_t channel, uint16_t dead_time) {
+  const channel_hw_t *hw = channel_hw(channel);
+  channel_t *ch = hw->data;
+  bool restart = ch->pwm.op_state == PWM_STATE_RUNNING;
+
   if (restart) {
     pwm_stop(channel);
   }
 
   dead_time = (uint16_t)clamp(dead_time, PWM_MIN_DEAD_TIME_NS, PWM_MAX_DEAD_TIME_NS);
-  const channel_hw_t *hw = channel_hw(channel->number);
+
+  /* Rounds up, so the actual dead time is never shorter than requested, and
+     never rounds down to zero. */
+  uint64_t ns_ticks = (((uint64_t)dead_time * PWM_KERNEL_CLOCK_HZ) + 999999999ULL) / 1000000000ULL;
+  uint32_t dead_time_ticks = (ns_ticks == 0U) ? 1U : (uint32_t)ns_ticks;
+
   HRTIM_DeadTimeCfgTypeDef dead_time_cfg = {0};
   dead_time_cfg.Prescaler = HRTIM_TIMDEADTIME_PRESCALERRATIO_DIV1;
-  dead_time_cfg.RisingValue = ns_to_ticks(dead_time);
-  dead_time_cfg.FallingValue = ns_to_ticks(dead_time);
+  dead_time_cfg.RisingValue = dead_time_ticks;
+  dead_time_cfg.FallingValue = dead_time_ticks;
   if (HAL_HRTIM_DeadTimeConfig(&hhrtim, hw->timer_index, &dead_time_cfg) != HAL_OK) {
     Error_Handler();
   }
-  channel->dead_time = dead_time;
+  ch->pwm.dead_time_ns = dead_time;
 
   if (restart) {
     (void)pwm_start(channel);
   }
 }
 
-void pwm_set_frequency(pwm_channel_t *channel, uint32_t frequency) {
-  if (!channel_is_valid(channel)) {
-    return;
-  }
-  bool restart = channel->op_state == PWM_STATE_RUNNING;
+void pwm_set_frequency(uint32_t channel, uint32_t frequency) {
+  const channel_hw_t *hw = channel_hw(channel);
+  channel_t *ch = hw->data;
+  bool restart = ch->pwm.op_state == PWM_STATE_RUNNING;
+
   if (restart) {
     pwm_stop(channel);
   }
 
   frequency = clamp(frequency, PWM_MIN_FREQUENCY_HZ, PWM_MAX_FREQUENCY_HZ);
-  const channel_hw_t *hw = channel_hw(channel->number);
-  uint32_t period_ticks = hz_to_period_ticks(frequency);
+  /* Integer division truncates, so the actual frequency lands at or just above
+     what was asked for. */
+  uint32_t period_ticks = PWM_KERNEL_CLOCK_HZ / frequency;
 
   HRTIM_TimeBaseCfgTypeDef time_base_cfg = {0};
   time_base_cfg.Period = period_ticks;
@@ -316,32 +321,33 @@ void pwm_set_frequency(pwm_channel_t *channel, uint32_t frequency) {
   }
 
   /* Reapply duty against the new period so frequency changes preserve duty. */
-  __HAL_HRTIM_SETCOMPARE(&hhrtim, hw->timer_index, HRTIM_COMPAREUNIT_1,
-                         duty_to_compare_ticks(period_ticks, channel->duty_cycle));
+  uint32_t compare = (period_ticks * clamp(ch->pwm.duty_applied, PWM_MIN_DUTY_CYCLE, PWM_MAX_DUTY_CYCLE)) / PWM_DUTY_SCALE;
+
+  /* Never below the floor - see PWM_MIN_COMPARE_TICKS. */
+  if (compare < PWM_MIN_COMPARE_TICKS) {
+    compare = PWM_MIN_COMPARE_TICKS;
+  }
+
+  __HAL_HRTIM_SETCOMPARE(&hhrtim, hw->timer_index, HRTIM_COMPAREUNIT_1, compare);
   if (HAL_HRTIM_SoftwareUpdate(&hhrtim, hw->timer_update) != HAL_OK) {
     Error_Handler();
   }
-  channel->frequency = frequency;
+  ch->pwm.frequency_hz = frequency;
 
   if (restart) {
     (void)pwm_start(channel);
   }
 }
 
-bool pwm_start(pwm_channel_t *channel) {
-  if (!channel_is_valid(channel)) {
-    return false;
-  }
-  const channel_hw_t *hw = channel_hw(channel->number);
+bool pwm_start(uint32_t channel) {
+  const channel_hw_t *hw = channel_hw(channel);
   uint32_t primask = enter_critical();
 
-  /* Rejects a faulted channel too: pwm_get_state() reports FAULTED, not
-     STOPPED, while any fault is latched. */
-  if (pwm_get_state(channel) != PWM_STATE_STOPPED) {
+  if (hw->data->pwm.op_state != PWM_STATE_STOPPED) {
     exit_critical(primask);
     return false;
   }
-  if (latch_present_faults(channel, hw)) {
+  if (latch_present_faults(hw)) {
     exit_critical(primask);
     return false;
   }
@@ -352,37 +358,34 @@ bool pwm_start(pwm_channel_t *channel) {
   SET_BIT(hhrtim.Instance->sCommonRegs.OENR, hw->output1 | hw->output2);
 
   /* Re-check: a fault edge could have arrived during the enable sequence. */
-  if (latch_present_faults(channel, hw)) {
+  if (latch_present_faults(hw)) {
     exit_critical(primask);
     return false;
   }
 
-  set_op_state(channel, PWM_STATE_RUNNING);
+  set_op_state(hw->data, PWM_STATE_RUNNING);
   exit_critical(primask);
   return true;
 }
 
-void pwm_stop(pwm_channel_t *channel) {
-  if (!channel_is_valid(channel)) {
-    return;
-  }
-  const channel_hw_t *hw = channel_hw(channel->number);
+void pwm_stop(uint32_t channel) {
+  const channel_hw_t *hw = channel_hw(channel);
+  channel_t *ch = hw->data;
   uint32_t primask = enter_critical();
+
   channel_stop_hw(hw);
-  if (channel->op_state == PWM_STATE_RUNNING) {
-    set_op_state(channel, PWM_STATE_STOPPED);
+  if (ch->pwm.op_state == PWM_STATE_RUNNING) {
+    set_op_state(ch, PWM_STATE_STOPPED);
   }
   exit_critical(primask);
 }
 
-bool pwm_clear_OCP_fault(pwm_channel_t *channel) {
-  if (!channel_is_valid(channel)) {
-    return false;
-  }
-  const channel_hw_t *hw = channel_hw(channel->number);
+bool pwm_clear_OCP_fault(uint32_t channel) {
+  const channel_hw_t *hw = channel_hw(channel);
+  channel_t *ch = hw->data;
   uint32_t primask = enter_critical();
 
-  if (channel->op_state == PWM_STATE_UNINITIALIZED) {
+  if (ch->pwm.op_state == PWM_STATE_UNINITIALIZED) {
     exit_critical(primask);
     return false;
   }
@@ -392,12 +395,12 @@ bool pwm_clear_OCP_fault(pwm_channel_t *channel) {
     exit_critical(primask);
     return false;
   }
-  if (pwm_OVP_fault_latched) {
+  if (sys.ovp_latched) {
     exit_critical(primask);
     return false;
   }
   /* Nothing latched or pending here - already clear (idempotent success). */
-  if (!channel->ocp_fault && !ocp_is_active(hw) && !ocp_is_pending(hw)) {
+  if (!ch->pwm.ocp_latched && !ocp_is_active(hw) && !ocp_is_pending(hw)) {
     exit_critical(primask);
     return true;
   }
@@ -405,27 +408,27 @@ bool pwm_clear_OCP_fault(pwm_channel_t *channel) {
   /* Refuse while the OCP condition is still physically present. */
   channel_stop_hw(hw);
   if (ocp_is_active(hw)) {
-    latch_OCP_fault(channel, hw);
+    latch_OCP_fault(hw);
     exit_critical(primask);
     return false;
   }
   __HAL_HRTIM_CLEAR_FLAG(&hhrtim, hw->fault_flag);
   __DMB();
   if (ocp_is_active(hw) || ocp_is_pending(hw)) {
-    latch_OCP_fault(channel, hw);
+    latch_OCP_fault(hw);
     exit_critical(primask);
     return false;
   }
 
-  channel->ocp_fault = false;
-  set_op_state(channel, PWM_STATE_STOPPED);
+  ch->pwm.ocp_latched = false;
+  set_op_state(ch, PWM_STATE_STOPPED);
   exit_critical(primask);
   return true;
 }
 
 bool pwm_clear_OVP_fault(void) {
   uint32_t primask = enter_critical();
-  bool had_OVP_fault = pwm_OVP_fault_latched || ovp_is_pending();
+  bool had_OVP_fault = sys.ovp_latched || ovp_is_pending();
 
   if (ovp_is_active()) {
     latch_OVP_fault();
@@ -446,17 +449,22 @@ bool pwm_clear_OVP_fault(void) {
     return false;
   }
 
-  pwm_OVP_fault_latched = false;
-  for (uint32_t i = 0U; i < (uint32_t)PWM_CHANNEL_COUNT; i++) {
-    pwm_channel_t *channel = channels[i];
-    if (channel->op_state == PWM_STATE_UNINITIALIZED) {
+  sys.ovp_latched = false;
+  for (uint32_t i = 0U; i < CHANNEL_COUNT; i++) {
+    const channel_hw_t *hw = channel_hw(i);
+    channel_t *ch = hw->data;
+
+    if (ch->pwm.op_state == PWM_STATE_UNINITIALIZED) {
       continue;
     }
     /* Re-latch any channel still holding its own OCP fault; the rest fall
-       back to STOPPED now the OVP flag is clear. */
-    const channel_hw_t *hw = channel_hw(channel->number);
-    if (channel->ocp_fault || ocp_is_active(hw) || ocp_is_pending(hw)) {
-      latch_OCP_fault(channel, hw);
+       back to STOPPED now the OVP flag is clear. That recovery is explicit
+       now that FAULTED is stored rather than derived - nothing else would
+       take these channels back out of it. */
+    if (ch->pwm.ocp_latched || ocp_is_active(hw) || ocp_is_pending(hw)) {
+      latch_OCP_fault(hw);
+    } else if (ch->pwm.op_state == PWM_STATE_FAULTED) {
+      set_op_state(ch, PWM_STATE_STOPPED);
     }
   }
 
@@ -466,11 +474,8 @@ bool pwm_clear_OVP_fault(void) {
 
 /* ISR context: hardware has already forced the outputs off; keep them
    disabled after the physical fault signal clears. */
-void pwm_OCP_fault(pwm_channel_id_t channel) {
-  if ((uint32_t)channel >= (uint32_t)PWM_CHANNEL_COUNT) {
-    return;
-  }
-  latch_OCP_fault(channels[(uint32_t)channel], channel_hw(channel));
+void pwm_OCP_fault(uint32_t channel) {
+  latch_OCP_fault(channel_hw(channel));
 }
 
 void pwm_OVP_fault(void) {

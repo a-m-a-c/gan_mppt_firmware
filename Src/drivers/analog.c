@@ -56,7 +56,7 @@ typedef struct
 
 #define ANALOG_INPUT_VBUS 0U
 #define ANALOG_INPUT_NTC1 1U
-#define ANALOG_INPUT_COUNT (ANALOG_INPUT_NTC1 + (uint32_t)PWM_CHANNEL_COUNT)
+#define ANALOG_INPUT_COUNT (ANALOG_INPUT_NTC1 + CHANNEL_COUNT)
 
 static const analog_input_t analog_inputs[ANALOG_INPUT_COUNT] = {
     [ANALOG_INPUT_VBUS]      = {ADC_CHANNEL_3, ANALOG_SAMPLE_VBUS}, /* PA6  V_BUS_DIV */
@@ -68,11 +68,11 @@ static const analog_input_t analog_inputs[ANALOG_INPUT_COUNT] = {
 };
 
 static uint32_t analog_vbus_latest_mv;
-static int16_t analog_ntc_latest[PWM_CHANNEL_COUNT];
+static int16_t analog_ntc_latest[CHANNEL_COUNT];
 /* Pin voltages kept alongside the converted values purely for diagnosis - see
    analog_ntc_pin_mv(). Cheap: six halfwords, no extra conversions. */
 static uint16_t analog_vbus_pin_dmv;
-static uint16_t analog_ntc_pin_dmv[PWM_CHANNEL_COUNT];
+static uint16_t analog_ntc_pin_dmv[CHANNEL_COUNT];
 static uint32_t analog_last_sweep_ms;
 static uint16_t analog_vrefint_raw;
 static uint16_t analog_ntc5_adc2_dmv;
@@ -306,7 +306,7 @@ void analog_init(void)
   analog_measure_vrefint();
   analog_ntc5_adc2_dmv = analog_read_ntc5_via_adc2();
 
-  for (uint32_t i = 0U; i < (uint32_t)PWM_CHANNEL_COUNT; i++)
+  for (uint32_t i = 0U; i < CHANNEL_COUNT; i++)
   {
     analog_ntc_latest[i] = ANALOG_TEMP_INVALID;
   }
@@ -331,7 +331,7 @@ void analog_service(void)
   analog_vbus_pin_dmv = raw_to_dmv(raw);
   analog_vbus_latest_mv = raw_to_vbus_mv(raw);
 
-  for (uint32_t i = 0U; i < (uint32_t)PWM_CHANNEL_COUNT; i++)
+  for (uint32_t i = 0U; i < CHANNEL_COUNT; i++)
   {
     uint16_t dmv = raw_to_dmv(analog_read_raw(&analog_inputs[ANALOG_INPUT_NTC1 + i]));
 
@@ -345,9 +345,9 @@ uint32_t analog_vbus_mv(void)
   return analog_vbus_latest_mv;
 }
 
-int16_t analog_ntc_decicelsius(pwm_channel_id_t channel)
+int16_t analog_ntc_decicelsius(uint32_t channel)
 {
-  if ((uint32_t)channel >= (uint32_t)PWM_CHANNEL_COUNT)
+  if ((uint32_t)channel >= CHANNEL_COUNT)
   {
     return ANALOG_TEMP_INVALID;
   }
@@ -361,9 +361,9 @@ static uint32_t dmv_to_mv(uint16_t dmv)
   return ((uint32_t)dmv + 5U) / 10U;
 }
 
-uint32_t analog_ntc_pin_mv(pwm_channel_id_t channel)
+uint32_t analog_ntc_pin_mv(uint32_t channel)
 {
-  if ((uint32_t)channel >= (uint32_t)PWM_CHANNEL_COUNT)
+  if ((uint32_t)channel >= CHANNEL_COUNT)
   {
     return 0U;
   }

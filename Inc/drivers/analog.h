@@ -60,7 +60,7 @@ uint32_t analog_vbus_mv(void);
 /* Latest NTC temperature in tenths of a degree C (253 is 25.3 degC), or
  * ANALOG_TEMP_INVALID. Also ANALOG_TEMP_INVALID for an out-of-range channel
  * id, and until the first sweep completes. */
-int16_t analog_ntc_decicelsius(pwm_channel_id_t channel);
+int16_t analog_ntc_decicelsius(uint32_t channel);
 
 /* Voltage at the NTC pin in millivolts, before any conversion - what a meter
  * on the pin should read. This is the measurement that separates a sensor
@@ -68,7 +68,7 @@ int16_t analog_ntc_decicelsius(pwm_channel_id_t channel);
  * pin voltage to temperature and knows nothing about which resistors produced
  * it, so if the firmware and a meter agree here, any remaining error is in the
  * divider the table assumes. Reported by the "adc" host command. */
-uint32_t analog_ntc_pin_mv(pwm_channel_id_t channel);
+uint32_t analog_ntc_pin_mv(uint32_t channel);
 
 /* Voltage at the V_BUS_DIV pin in millivolts, before the divider is undone.
  * The control for the above: it shares the ADC and the code path, so if this
@@ -97,7 +97,7 @@ uint16_t analog_vrefint_factory(void);
  * correctly, which is *not* the same as proving ADC1 does - VREFINT is an
  * ADC3-only channel on this part. This closes that gap:
  *
- *   agrees with analog_ntc_pin_mv(PWM_CHANNEL_E)  -> the pad really is at that
+ *   agrees with analog_ntc_pin_mv(CHANNEL_E)  -> the pad really is at that
  *                                                    voltage; look at the board
  *   disagrees                                     -> one converter is lying,
  *                                                    and ADC1 is the suspect

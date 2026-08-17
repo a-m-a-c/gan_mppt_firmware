@@ -173,6 +173,24 @@ hangs off `app_setup()` and `app_loop()` in `Src/app/app.c`.
 
 Derived from the existing code. Match it; do not introduce a second style.
 
+### Brace style
+
+Opening brace on the same line, for functions and for control statements
+alike:
+
+```c
+void led_init(void) {
+  if (running) {
+    stop();
+  } else {
+    start();
+  }
+}
+```
+
+`pwm.c` is the reference. Some older files are still in the other style; they
+get converted as they are touched, not in a separate sweep.
+
 ### Naming and structure
 
 - `snake_case` throughout. **Short module prefix on every public symbol**

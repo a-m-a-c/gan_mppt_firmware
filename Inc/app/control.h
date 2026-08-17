@@ -35,8 +35,8 @@
  * "set 1 freq ..." followed by "set 1 duty ..." glitches a live output once
  * instead of twice.
  *
- * Actual state is not stored here. pwm_get_state() already folds latched
- * faults into the channel state and is the authority; this module holds only
+ * Actual state is not stored here. chan_x.pwm.op_state is the authority - it
+ * carries FAULTED as well as the operational states; this module holds only
  * what was *asked for*. */
 
 typedef enum
@@ -52,7 +52,7 @@ void control_init(void);
 
 /* Record a request. Each returns false, and records nothing, when the value is
  * outside its config.h range - or, for control_request_run(true), when
- * pwm_get_state() already says the channel cannot start. That makes rejection
+ * op_state already says the channel cannot start. That makes rejection
  * synchronous, so a transport can answer its host straight away rather than
  * waiting for the apply.
  *
@@ -61,12 +61,12 @@ void control_init(void);
  *
  * Safe to call from interrupt context, though the intended FDCAN path buffers
  * frames and parses them from the loop instead. */
-bool control_request_frequency(pwm_channel_id_t channel, uint32_t hz, control_source_t src);
-bool control_request_duty(pwm_channel_id_t channel, uint16_t tenths, control_source_t src);
-bool control_request_dead_time(pwm_channel_id_t channel, uint16_t ns, control_source_t src);
-bool control_request_init(pwm_channel_id_t channel, control_source_t src);
-bool control_request_run(pwm_channel_id_t channel, bool run, control_source_t src);
-bool control_request_clear_ocp(pwm_channel_id_t channel, control_source_t src);
+bool control_request_frequency(uint32_t channel, uint32_t hz, control_source_t src);
+bool control_request_duty(uint32_t channel, uint16_t tenths, control_source_t src);
+bool control_request_dead_time(uint32_t channel, uint16_t ns, control_source_t src);
+bool control_request_init(uint32_t channel, control_source_t src);
+bool control_request_run(uint32_t channel, bool run, control_source_t src);
+bool control_request_clear_ocp(uint32_t channel, control_source_t src);
 bool control_request_clear_ovp(control_source_t src);
 
 /* Applies everything pending. Call once per pass, between the transports that
@@ -76,7 +76,7 @@ bool control_service(void);
 
 /* Diagnostics. `apply_failures` counts starts that were accepted but which
  * pwm_start() then refused - a fault that latched between request and apply. */
-control_source_t control_last_source(pwm_channel_id_t channel);
-uint32_t control_apply_failures(pwm_channel_id_t channel);
+control_source_t control_last_source(uint32_t channel);
+uint32_t control_apply_failures(uint32_t channel);
 
 #endif /* CONTROL_H */

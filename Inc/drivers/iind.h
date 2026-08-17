@@ -26,8 +26,8 @@
  * (I_IND_1..5) so it cannot be confused with the INA228 input/output currents,
  * which measure something else entirely and answer far more slowly.
  *
- * Channels are addressed by pwm_channel_id_t, so a caller says
- * iind_current_ma(PWM_CHANNEL_A) and gets the current in the same channel it
+ * Channels are addressed by uint32_t, so a caller says
+ * iind_current_ma(CHANNEL_A) and gets the current in the same channel it
  * commanded. That mapping is the point of this layer.
  *
  * WHY THE TRIGGER MATTERS MORE THAN THE RATE
@@ -112,15 +112,15 @@ uint16_t iind_sample_point(void);
 /* Latest inductor current in milliamps, signed - negative means current is
  * flowing back out of the bus, which a synchronous boost can do. Zero for an
  * out-of-range channel id, and until the first sample arrives. */
-int32_t iind_current_ma(pwm_channel_id_t channel);
+int32_t iind_current_ma(uint32_t channel);
 
 /* The raw count and the calibrated zero behind that figure, for diagnosing a
  * reading that looks wrong without having to work backwards through the scale
  * factor. */
-uint16_t iind_raw(pwm_channel_id_t channel);
-uint16_t iind_zero(pwm_channel_id_t channel);
+uint16_t iind_raw(uint32_t channel);
+uint16_t iind_zero(uint32_t channel);
 
-iind_state_t iind_state(pwm_channel_id_t channel);
+iind_state_t iind_state(uint32_t channel);
 
 /* Counts completed sample sets. A control loop watches this rather than a
  * timer, so it runs on fresh data instead of on a guess about the rate. */

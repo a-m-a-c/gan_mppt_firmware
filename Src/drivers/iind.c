@@ -71,15 +71,15 @@ typedef struct
   uint32_t index;
 } channel_source_t;
 
-static const channel_source_t channel_source[PWM_CHANNEL_COUNT] = {
-    [PWM_CHANNEL_A] = {IIND_ADC2_BUFFER, 0U}, /* PF13 ADC2_INP2 */
-    [PWM_CHANNEL_B] = {IIND_ADC3_BUFFER, 0U}, /* PF3  ADC3_INP5 */
-    [PWM_CHANNEL_C] = {IIND_ADC3_BUFFER, 1U}, /* PF5  ADC3_INP4 */
-    [PWM_CHANNEL_D] = {IIND_ADC3_BUFFER, 2U}, /* PF7  ADC3_INP3 */
-    [PWM_CHANNEL_E] = {IIND_ADC3_BUFFER, 3U}, /* PF9  ADC3_INP2 */
+static const channel_source_t channel_source[CHANNEL_COUNT] = {
+    [CHANNEL_A] = {IIND_ADC2_BUFFER, 0U}, /* PF13 ADC2_INP2 */
+    [CHANNEL_B] = {IIND_ADC3_BUFFER, 0U}, /* PF3  ADC3_INP5 */
+    [CHANNEL_C] = {IIND_ADC3_BUFFER, 1U}, /* PF5  ADC3_INP4 */
+    [CHANNEL_D] = {IIND_ADC3_BUFFER, 2U}, /* PF7  ADC3_INP3 */
+    [CHANNEL_E] = {IIND_ADC3_BUFFER, 3U}, /* PF9  ADC3_INP2 */
 };
 
-static uint16_t iind_zero_counts[PWM_CHANNEL_COUNT];
+static uint16_t iind_zero_counts[CHANNEL_COUNT];
 static iind_state_t iind_op_state = IIND_STATE_UNINITIALIZED;
 static uint16_t iind_point = IIND_DEFAULT_SAMPLE_POINT;
 static uint32_t iind_samples;
@@ -90,7 +90,7 @@ static uint32_t clamp(uint32_t value, uint32_t min, uint32_t max)
   return (value < min) ? min : ((value > max) ? max : value);
 }
 
-static uint16_t read_raw(pwm_channel_id_t channel)
+static uint16_t read_raw(uint32_t channel)
 {
   const channel_source_t *source = &channel_source[(uint32_t)channel];
 
@@ -108,7 +108,7 @@ static uint16_t read_raw(pwm_channel_id_t channel)
    through five periods and land nowhere useful. */
 static bool configure_master(void)
 {
-  uint32_t frequency = clamp(channel_a.frequency, PWM_MIN_FREQUENCY_HZ, PWM_MAX_FREQUENCY_HZ);
+  uint32_t frequency = clamp(chan_a.pwm.frequency_hz, PWM_MIN_FREQUENCY_HZ, PWM_MAX_FREQUENCY_HZ);
   uint32_t period_ticks = PWM_KERNEL_CLOCK_HZ / frequency;
   uint32_t master_ticks = period_ticks * IIND_SAMPLE_DIVIDER;
   uint32_t compare_ticks = (period_ticks * iind_point) / PWM_DUTY_SCALE;
@@ -155,7 +155,7 @@ static bool configure_adc_trigger(void)
 
 bool iind_init(void)
 {
-  for (uint32_t i = 0U; i < (uint32_t)PWM_CHANNEL_COUNT; i++)
+  for (uint32_t i = 0U; i < CHANNEL_COUNT; i++)
   {
     iind_zero_counts[i] = 0U;
   }
@@ -237,16 +237,16 @@ void iind_stop(void)
 
 bool iind_calibrate_zero(void)
 {
-  uint32_t accumulator[PWM_CHANNEL_COUNT] = {0};
+  uint32_t accumulator[CHANNEL_COUNT] = {0};
   bool was_running = (iind_op_state == IIND_STATE_RUNNING);
 
   /* INVARIANT: the zero is only the zero if nothing is switching. Calibrating
      against a live converter would fold its operating current into the offset
      and bias every later reading by exactly that amount - a fault that reads
      as a plausible current rather than as an error. */
-  for (uint32_t i = 0U; i < (uint32_t)PWM_CHANNEL_COUNT; i++)
+  for (uint32_t i = 0U; i < CHANNEL_COUNT; i++)
   {
-    pwm_state_t state = pwm_get_state(pwm_channel((pwm_channel_id_t)i));
+    pwm_state_t state = channel_by_id(i)->pwm.op_state;
 
     if ((state != PWM_STATE_STOPPED) && (state != PWM_STATE_UNINITIALIZED))
     {
@@ -270,13 +270,13 @@ bool iind_calibrate_zero(void)
       /* wait for the next conversion to land */
     }
 
-    for (uint32_t i = 0U; i < (uint32_t)PWM_CHANNEL_COUNT; i++)
+    for (uint32_t i = 0U; i < CHANNEL_COUNT; i++)
     {
-      accumulator[i] += read_raw((pwm_channel_id_t)i);
+      accumulator[i] += read_raw(i);
     }
   }
 
-  for (uint32_t i = 0U; i < (uint32_t)PWM_CHANNEL_COUNT; i++)
+  for (uint32_t i = 0U; i < CHANNEL_COUNT; i++)
   {
     iind_zero_counts[i] = (uint16_t)(accumulator[i] / IIND_ZERO_SAMPLES);
   }
@@ -304,11 +304,11 @@ uint16_t iind_sample_point(void)
   return iind_point;
 }
 
-int32_t iind_current_ma(pwm_channel_id_t channel)
+int32_t iind_current_ma(uint32_t channel)
 {
   int32_t delta;
 
-  if ((uint32_t)channel >= (uint32_t)PWM_CHANNEL_COUNT)
+  if ((uint32_t)channel >= CHANNEL_COUNT)
   {
     return 0;
   }
@@ -321,27 +321,27 @@ int32_t iind_current_ma(pwm_channel_id_t channel)
   return (delta * (int32_t)IIND_FULL_SCALE_MA) / (int32_t)IIND_FULL_SCALE;
 }
 
-uint16_t iind_raw(pwm_channel_id_t channel)
+uint16_t iind_raw(uint32_t channel)
 {
-  if ((uint32_t)channel >= (uint32_t)PWM_CHANNEL_COUNT)
+  if ((uint32_t)channel >= CHANNEL_COUNT)
   {
     return 0U;
   }
   return read_raw(channel);
 }
 
-uint16_t iind_zero(pwm_channel_id_t channel)
+uint16_t iind_zero(uint32_t channel)
 {
-  if ((uint32_t)channel >= (uint32_t)PWM_CHANNEL_COUNT)
+  if ((uint32_t)channel >= CHANNEL_COUNT)
   {
     return 0U;
   }
   return iind_zero_counts[(uint32_t)channel];
 }
 
-iind_state_t iind_state(pwm_channel_id_t channel)
+iind_state_t iind_state(uint32_t channel)
 {
-  if ((uint32_t)channel >= (uint32_t)PWM_CHANNEL_COUNT)
+  if ((uint32_t)channel >= CHANNEL_COUNT)
   {
     return IIND_STATE_UNINITIALIZED;
   }
