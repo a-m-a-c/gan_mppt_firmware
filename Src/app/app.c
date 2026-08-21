@@ -9,10 +9,12 @@
 #include "pwm.h"
 #include "config.h"
 #include "main.h"
+#include "analog.h"
 
 void app_setup(void) {
   channel_init_all();
   led_init();
+  analog_init();
   led_lightshow(true);
   pwm_init(CHANNEL_A);
   pwm_start(CHANNEL_A);
@@ -22,6 +24,7 @@ static uint16_t target_duty_cycle = 300; //20 %
 static uint16_t current_duty_cycle = 0;
 
 void app_loop(void) {
+  analog_service();
   if (led_lightshow_service()) {
     return;
   }
