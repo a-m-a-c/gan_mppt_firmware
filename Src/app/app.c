@@ -4,34 +4,55 @@
 
 #include "app.h"
 
-#include "channel.h"
-#include "led.h"
-#include "pwm.h"
-#include "config.h"
-#include "main.h"
 #include "analog.h"
+#include "channel.h"
+#include "channel_telem.h"
+#include "command.h"
+#include "config.h"
+#include "control.h"
+#include "iind.h"
+#include "led.h"
+#include "main.h"
+#include "pwm.h"
+#include "serial.h"
 
 void app_setup(void) {
   channel_init_all();
-  led_init();
+
+  // Telemetry. Soft-fails per channel if no sensor answers, so an unpopulated
+  // I2C bus leaves the converter running untouched.
+  telem_init(&telem_a);
+  telem_init(&telem_b);
+  telem_init(&telem_c);
+  telem_init(&telem_d);
+  telem_init(&telem_e);
+  telem_start_sweeps();
+
+  control_init();
   analog_init();
+  serial_init();
+
+  // Inductor current sensing. Returns false until the CubeMX changes in
+  // .agents/hardware.md are made; the converter runs without it.
+  (void)iind_init();
+
+  led_init();
   led_lightshow(true);
+
   pwm_init(CHANNEL_A);
   pwm_start(CHANNEL_A);
 }
 
-static uint16_t target_duty_cycle = 300; //20 %
-static uint16_t current_duty_cycle = 0;
-
 void app_loop(void) {
-  analog_service();
-  if (led_lightshow_service()) {
-    return;
-  }
-  while (current_duty_cycle <= target_duty_cycle) {
-    pwm_set_duty_cycle(CHANNEL_A, current_duty_cycle);
-    current_duty_cycle += 10;
-    HAL_Delay(200);
-  }
+  telem_service();  /* starts or advances an I2C transfer; never waits */
+  analog_service(); /* bus volts + 5 NTCs, one sweep per ANALOG_PERIOD_MS */
 
+  /* Host -> board -> host, in that order and within one pass, so the "#cfg"
+     lines a command triggers already describe the applied result. Keep these
+     adjacent and in this order - see command.h. */
+  command_service();        /* drain received lines, parse, post requests */
+  control_service();        /* apply every pending setpoint to the driver */
+  command_report_service(); /* queue the "#cfg" set and the telemetry CSV */
+
+  led_lightshow_service();
 }

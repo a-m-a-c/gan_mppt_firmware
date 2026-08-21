@@ -25,6 +25,12 @@ Iind is inductor current, signed, sampled at 100 kHz and reported at 20 Hz -
 a trend, not a waveform. valid_mask bits 0..4 flag the I2C sensors per channel,
 bits 5..9 flag live inductor sampling.
 
+Per-channel efficiency (Pout/Pin, %) is computed here rather than sent by the
+firmware - the four readings it needs are already on the line. It reads "--"
+below EFF_MIN_INPUT_W of input power, where the ratio is only dividing noise.
+Its unit is "%", so with the two-axis plot you get a curve by selecting the
+efficiency series on their own, or alongside one other unit but not two.
+
 Everything else the firmware sends starts with '#' - see Inc/app/command.h
 for the command grammar and the reply lines parsed below.
 
@@ -74,17 +80,33 @@ LIMITS = {
 # terminator.
 COMMAND_MAX = 95
 
-# Series order must match the firmware line. (label, unit, scale-from-integer)
-# Temperature is not reported - see Inc/app/command.h.
-SERIES = [("V_BUS", "V", 1000.0)]
+# Series taken straight off the firmware line, in its field order.
+# (label, unit, scale-from-integer). Temperature is not reported - see
+# Inc/app/command.h.
+WIRE_SERIES = [("V_BUS", "V", 1000.0)]
 for _ch in range(1, 6):
-    SERIES += [
+    WIRE_SERIES += [
         (f"CH{_ch} Vin", "V", 1000.0),
         (f"CH{_ch} Iin", "A", 1000.0),
         (f"CH{_ch} Vout", "V", 1000.0),
         (f"CH{_ch} Iout", "A", 1000.0),
         (f"CH{_ch} Iind", "A", 1000.0),
     ]
+
+# Derived here, not sent by the firmware: efficiency is Pout/Pin out of the
+# four INA228 readings a channel already carries, so it costs nothing on the
+# wire and no firmware change. The scale only sets the readout's decimal
+# places for these - nothing divides by it, because they never arrive as
+# integers.
+DERIVED_SERIES = [(f"CH{_ch} Eff", "%", 10.0) for _ch in range(1, 6)]
+
+SERIES = WIRE_SERIES + DERIVED_SERIES
+
+# Below this input power the ratio is noise over noise. The INA228 pair
+# resolves about 0.1 mA, and a converter rated 100-227 W says nothing useful
+# about its efficiency at a fraction of a watt - it would just draw a wild
+# trace whenever the panel is dark or the channel is stopped.
+EFF_MIN_INPUT_W = 1.0
 
 # Shared between the reader thread and the HTTP handlers.
 _lock = threading.Lock()
@@ -128,8 +150,26 @@ def show_ports():
         print(f"  {p.device:10s}  {p.description}")
 
 
+def efficiency(values, ch):
+    """Pout/Pin as a percentage for channel index ch, or None when there is too
+    little input power for the ratio to mean anything.
+
+    A channel's four INA228 readings are committed together by the firmware
+    (telem_commit in channel_telem.c), so they describe one instant. That is
+    what makes a per-channel ratio valid at all - the fields are not sampled
+    independently."""
+    base = 1 + ch * 5  # skip V_BUS, then five fields per channel
+    vin, iin, vout, iout = values[base:base + 4]
+    p_in = vin * iin
+    if p_in < EFF_MIN_INPUT_W:
+        return None
+    return 100.0 * (vout * iout) / p_in
+
+
 def parse(line):
-    """Return (tick_ms, valid_mask, [scaled values]) or None if not telemetry."""
+    """Return (tick_ms, valid_mask, [scaled values]) or None if not telemetry.
+
+    The value list is WIRE_SERIES in field order, then DERIVED_SERIES."""
     parts = line.split(",")
     if len(parts) != FIELD_COUNT:
         return None
@@ -138,7 +178,8 @@ def parse(line):
     except ValueError:
         return None  # partial first line, or noise on connect
     tick_ms, valid_mask = raw[0], raw[1]
-    values = [raw[2 + i] / SERIES[i][2] for i in range(len(SERIES))]
+    values = [raw[2 + i] / WIRE_SERIES[i][2] for i in range(len(WIRE_SERIES))]
+    values += [efficiency(values, ch) for ch in range(CHANNEL_COUNT)]
     return tick_ms, valid_mask, values
 
 
@@ -933,6 +974,10 @@ function draw() {
     let sum = 0;
     for (let k = 0; k < seg.length; k++) {
       const v = seg[k][1][i];
+      // A derived series can have no reading at all - efficiency below the
+      // input-power floor. Skip it rather than averaging null into NaN, which
+      // would poison every later point in the window.
+      if (v === null) continue;
       q.push(v); sum += v;
       if (q.length > N) sum -= q.shift();
       if (k >= lead) pts.push([seg[k][0], sum / q.length]);
