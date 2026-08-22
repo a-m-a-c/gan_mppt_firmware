@@ -15,12 +15,7 @@
 #ifndef CONFIG_H
 #define CONFIG_H
 
-/* Everything in here is a knob: a limit, a cadence, a threshold or a board
- * value. Facts that follow from the hardware - register layouts, ADC
- * resolution, unit scales - stay with the code that depends on them.
- *
- * No includes, no types, no logic. Just numbers, so this header can be pulled
- * into anything without dragging dependencies along with it. */
+#define CHECK_TIMEOUT_MS 5000U // 5 seconds.
 
 /* ========================== Channels ======================== */
 

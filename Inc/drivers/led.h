@@ -16,7 +16,7 @@
 #define LED_H
 
 #include <stdbool.h>
-
+#include <stdint.h>
 /* Pin writes and drive polarity, and nothing else. Each function takes "should
  * this LED be lit" and makes the pin match, so no caller ever needs to know
  * that the per-channel lines are active low and the status lines are active
@@ -43,27 +43,7 @@ void led_set_active(bool on);   /* LED_ACTIVE   */
 void led_set_err(bool on);      /* LED_ERR      */
 void led_set_out_conn(bool on); /* LED_OUT_CONN */
 
-/* Start-up lamp test: walks one lit LED along all eight lines for
- * LED_SEQUENCE_MS, so a dead line shows up before anything depends on it.
- *
- * Non-blocking, because the window it runs in is the same window a "hold"
- * command has to arrive in - a blocking delay here would make the board deaf
- * for five seconds. led_lightshow(true) arms it, led_lightshow(false) cancels
- * it, and led_lightshow_service() must be called every pass of the main loop
- * while it runs.
- *
- * It owns all eight lines while it is running, so the caller must not drive
- * them itself until the service returns false:
- *
- *     if (!led_lightshow_service())
- *     {
- *       led_update();
- *     }
- */
-void led_lightshow(bool on);
-
-/* Advances the sequence. Returns true while it is still running, false once it
- * has finished and left every line off. */
-bool led_lightshow_service(void);
+void led_channel_flash_begin(uint32_t interval_ms);
+void led_channel_flash_service(void);
 
 #endif /* LED_H */

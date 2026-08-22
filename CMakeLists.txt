@@ -58,6 +58,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Src/app/command.c
     Src/app/control.c
     Src/app/mppt.c
+    Src/app/check.c
 )
 
 # Add include paths

@@ -10,28 +10,54 @@
 #include "config.h"
 #include "main.h"
 #include "analog.h"
+#include "check.h"
+
+volatile bool error_flag = false; // Global error flag, set to true when something I did not expect occurs.
 
 void app_setup(void) {
   channel_init_all();
   led_init();
-  analog_init();
-  led_lightshow(true);
-  pwm_init(CHANNEL_A);
-  pwm_start(CHANNEL_A);
+  sys.state = SYSTEM_STATE_INIT;
 }
 
-static uint16_t target_duty_cycle = 300; //20 %
-static uint16_t current_duty_cycle = 0;
+
+static system_state_t prev_state = SYSTEM_STATE_INIT;
 
 void app_loop(void) {
-  analog_service();
-  if (led_lightshow_service()) {
-    return;
-  }
-  while (current_duty_cycle <= target_duty_cycle) {
-    pwm_set_duty_cycle(CHANNEL_A, current_duty_cycle);
-    current_duty_cycle += 10;
-    HAL_Delay(200);
-  }
+  const bool entered = (sys.state != prev_state);
+  prev_state = sys.state;
 
+  switch (sys.state) {
+    case SYSTEM_STATE_INIT:
+      sys.state = SYSTEM_STATE_CHECK;
+      break;
+
+    case SYSTEM_STATE_CHECK: {
+      if (entered) {
+        check_begin();
+      }
+      check_result_t result = check_service();
+      if (result == CHECK_FAILED) {
+        sys.state = SYSTEM_STATE_FAULTED;
+      } else if (result == CHECK_PASSED) {
+        sys.state = SYSTEM_STATE_STANDBY;
+      }
+      break;
+    }
+
+    case SYSTEM_STATE_STANDBY:
+      break;
+
+    case SYSTEM_STATE_ACTIVE:
+      break;
+
+    case SYSTEM_STATE_FAULTED:
+      led_set_err(true);
+      break;
+
+    default:
+      error_flag = true;
+      sys.state = SYSTEM_STATE_FAULTED;
+      break;
+  }
 }

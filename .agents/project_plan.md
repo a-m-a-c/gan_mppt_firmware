@@ -46,18 +46,24 @@ Simplicity and clean, understandable code, with room to experiment with control
 algorithms. Configuration lives in `Inc/config.h`; anything that follows from
 the hardware and can never change is hardcoded next to the code that uses it.
 
-### What exists today
+### The shape of the loop
 
 ```
 main() ──> app_setup()            one-time bring-up
        └─> app_loop()             one non-blocking pass, forever
              telem_service()      advances one I2C transfer
-             vbus_service()       one ADC conversion
+             analog_service()     bus voltage, NTCs
+             iind_service()       inductor current
              command_service()    parse host lines -> post requests
              control_service()    apply pending setpoints -> pwm_*()
-             command_report_service()   emit #cfg + telemetry CSV
+             report_service()     emit #cfg + telemetry CSV
              led_service()        pure reads, no I/O
 ```
+
+> **`app.c` does not look like this yet.** As of 2026-08-22 `app_loop()` calls
+> only `analog_service()` and `led_lightshow_service()`, then blocking-ramps
+> channel A with `HAL_Delay`. `command.c`, `control.c` and `channel_telem.c`
+> compile but nothing calls them. This block is the target, not the state.
 
 The load-bearing rule is that **`control_service()` is the only code that calls
 `pwm_*()`.** Every command source — serial now, FDCAN and MPPT later — posts a
@@ -107,9 +113,11 @@ Two rules hold it together:
   voltage it has currently made.** Battery present → the measured bus. CV bench
   → the setpoint. Without this the ceiling chases its own output; see 030.
 
-### Modes and states are separate axes
+### Modes are not states
 
-**Mode** is what was asked for; **state** is where the channel is.
+**Mode** is what was asked for; **state** is where the channel is. A channel in
+MPPT mode that is stopped is a normal thing to be. States are in
+[fsm.md](fsm.md); the modes are:
 
 | Mode | Regulates | Via | Sign |
 |---|---|---|---|
@@ -121,60 +129,20 @@ CV is a **bench mode for developing control algorithms on a single channel**
 into a resistive or electronic load. Five channels regulating one shared bus
 would fight; only one runs in CV at a time.
 
-Per channel:
+### State machines
 
-```
-   STOPPED --start--> STARTING --conduction + bus ok + dwell--> ACTIVE
-      ^                   |                                      |
-      |                   +---- ramp timeout ----+               |
-      |                                          |               |
-      +--------- clear ------- FAULTED <---------+------ OCP/OVP -+
-```
+Two, and they live in **[fsm.md](fsm.md)** — states, what happens in each, and
+every transition. Do not restate them here.
 
-`STARTING` is open-loop only — ramp from 0 %, no integrator anywhere. It exists
-because while the ideal diode blocks, the channel cannot move the measured bus
-at all, so a closed loop there winds up against a constant error and slams on
-conduction. Conduction is detected on the channel's own **output current**,
-never on a voltage. `ACTIVE` is where the mode's regulator runs.
+- **System FSM.** `INIT → CHECK → STANDBY`, then a run state entered **only on
+  a command from the car computer**. `FAULT` from anywhere, left only by
+  rebooting. Nothing arms itself. See [decisions.md](decisions.md) 032, which
+  supersedes 031.
+- **Channel FSM.** One per channel, running underneath whichever run state the
+  system is in. Sketched, not yet designed.
 
-### System state — arming, and nothing more
-
-"Normal operation vs a serial dev mode" collapses to one bit: **is the
-autonomous sequencer allowed to run?** Everything else that distinguishes them
-is already the per-channel mode axis. That single bit is what justifies a
-system-level FSM at all, and is all it decides.
-
-```
-  INIT --> CHECK --> STANDBY --armed--> RUN
-                        ^                |
-                        +---- hold ------+
-
-              FAULT <-- OVP latched -- (any state)
-                +-- clear --> STANDBY
-```
-
-- **INIT** — peripherals up, nothing switching, nothing measured.
-- **CHECK** — bounded window. Exits on a **checklist, not a clock**: one good
-  INA228 sweep, a settled bus reading, fault lines sampled at rest, and the
-  `iind` zero calibration, which [decisions.md](decisions.md) 028 says is only
-  valid while every channel is stopped. A timeout is the backstop, not the
-  condition.
-- **STANDBY** — everything known, nothing switching. Safe to sit in
-  indefinitely. **This is the dev mode.**
-- **RUN** — the sequencer brings channels up and hands them to MPPT. Its one
-  non-obvious job is **staggering** starts: five simultaneous ramps into one
-  shared bus is five inrush events against a global OVP.
-- **FAULT** — OVP latched. System-level because it is global and makes every
-  start refuse. OCP stays per-channel; one channel tripping must not take the
-  other four down.
-
-**CHECK auto-advances to RUN unless a `hold` lands during the window.** No
-command, no host, no connection — it arms. See 031 for why the default points
-this way and why serial presence must not be the trigger.
-
-**There is no auto-rearm.** A board in `hold` with a probe on the power stage
-must never decide on its own to start switching. The mitigation for "left in
-hold accidentally" is to make hold loud, not to make it expire.
+The car computer drives the system over FDCAN, and **serial carries the same
+message set** so the bench exercises the real path.
 
 ### Roadmap
 
@@ -190,8 +158,8 @@ no MPPT in it; step 4 is then small.
 4. **MPPT.** P&O on the Vin setpoint, on top of the same slot. `Src/app/mppt.c`
    stays a pure function of measurements → setpoint, so it is swappable and
    testable on the host.
-5. **`INIT`/`CHECK`/`STANDBY`**, then the `RUN` sequencer once there is a
-   working converter to drive with it.
+5. **`INIT`/`CHECK`/`STANDBY`**, then the run states once there is a working
+   converter to drive with them. See [fsm.md](fsm.md).
 6. **Analog build-out.** NTC and fast current sensing need an ADC plan
    ([hardware.md](hardware.md) open question 4).
 7. **FDCAN.** Telemetry broadcast to the car computer on FDCAN1.
@@ -200,13 +168,8 @@ no MPPT in it; step 4 is then small.
 
 ### Open questions
 
-1. **Is `hold` accepted at any time, or only during CHECK and RUN?** Always is
-   simpler and safer at the bench; against it, a mid-drive CAN glitch could stop
-   power generation.
-2. **When a channel faults in RUN, does the sequencer retry it?** Never, a
-   bounded number of times, or after a cooldown? Isc is below the OCP threshold,
-   so per 012 every trip is a transient — which argues a retry is usually right,
-   and equally that an unbounded retry loop would hide a real fault.
-3. **Numbers still TBD**, all to be parameterised in `config.h`: ceiling margin,
-   conduction-detect threshold, bus floor for handover, startup dwell, ramp
-   timeout, CV setpoint cap and gains, MPPT step size and settle time.
+FSM questions live in [fsm.md](fsm.md). These are the control ones.
+
+1. **Numbers still TBD**, all to be parameterised in `config.h`: ceiling margin,
+   bus floor for handover, CV setpoint cap and gains, MPPT step size and settle
+   time.

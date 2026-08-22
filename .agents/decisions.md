@@ -693,3 +693,49 @@ guesswork.
 whether the sequencer retries a faulted channel. Both in
 [project_plan.md](project_plan.md).
 **Status:** designed, agreed in conversation. **Not started.**
+
+## 032 — The system FSM is commanded, not self-arming. Supersedes 031  (2026-08-22)
+**Decision:** `INIT → CHECK → STANDBY`, and **STANDBY does not advance on its
+own.** It waits for a command from the car computer to enter a run state.
+Run states are plural — `RUN_MPPT`, `RUN_CV`, more to come — not one `RUN`.
+`FAULT` is reachable from any state and is left **only by rebooting**: a power
+cycle or a `reboot` command. No clear-in-place, no auto-recovery.
+**Serial carries the same message set as FDCAN.** Same commands, same
+arguments, same replies. Neither transport is privileged, so the bench exercises
+the real control path rather than a parallel debug one.
+The states, their contents and every transition now live in [fsm.md](fsm.md).
+This entry records only what changed and why.
+**Why this reverses 031:** 031 argued from failure direction — make RUN the
+default, so the silent failure is "it works". That reasoning assumed the board
+decides for itself when to generate. It does not: **the car computer does**, and
+it has to, because it is the thing that knows the battery's state, whether the
+car is running, and whether charging is wanted at all. Once an external
+authority owns that decision, self-arming is not a safety default, it is the
+firmware guessing at something another node already knows.
+**What falls out, and it is most of 031:**
+- **`hold` is gone**, and so is the `HOLD` state proposed against it. STANDBY
+  is now the safe idle state by construction — nothing arms, so there is
+  nothing to hold off. The open question "is `hold` accepted at any time" is
+  void.
+- **"No auto-rearm" is now structural rather than a rule to remember.** A board
+  on the bench with a probe on the stage sits in STANDBY and cannot start.
+- **Inferring dev mode from serial presence is void as a question.** It was
+  only ever a way to suppress self-arming. Nothing self-arms. Discussed and
+  dropped 2026-08-21, along with the RX-idle-level detection it would have
+  needed — UART5_RX is PD2, `GPIO_NOPULL`, and the method only works at all if
+  the USB-UART bridge is powered from USB rather than the board rail.
+- **CHECK's exit changes.** It went to RUN on a checklist with a timeout
+  backstop. It now goes to STANDBY on a clean checklist, and to **FAULT** on
+  any failed check or on the timeout.
+**Accepted cost — a failed self-check needs a reboot that may not fix it.** One
+dead INA228 sends the board to FAULT, and restarting will find the same dead
+device. Running four channels may well beat running none. Left open in
+[fsm.md](fsm.md) rather than resolved here, because the answer depends on
+whether a channel can be declared absent, which is not designed.
+**Rejected — one `RUN` state with a mode field.** It is the smaller diagram,
+and it is what 031 had. But the modes differ in what they permit, not just in
+which regulator runs: `RUN_CV` is single-channel by definition and carries which
+channel that is, while `RUN_MPPT` runs all five. Folding those into one state
+means a field that changes what the state means, which is the thing a state
+machine exists to avoid.
+**Status:** designed, agreed in conversation. **Not started.**

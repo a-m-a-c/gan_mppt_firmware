@@ -11,6 +11,7 @@ are both used here), so nothing lives in a model's private memory.
 | [project_plan.md](project_plan.md) | Intent, agent working rules, firmware architecture | **Always, first.** |
 | [hardware.md](hardware.md) | Board facts: converters, sensors, limits, pin/fault mapping, derived safety numbers | Before touching anything that drives or measures hardware |
 | [workflow.md](workflow.md) | Build, flash, serial, bench test loop, coding conventions | Before building, flashing or writing code |
+| [fsm.md](fsm.md) | The system and per-channel state machines: every state, and every transition | Before touching start/stop sequencing, or anything the car computer commands |
 | [decisions.md](decisions.md) | Append-only log of what was decided and why | Before proposing a change to existing structure |
 
 `image.png` is the original photo of the INA228 address list. The addresses are

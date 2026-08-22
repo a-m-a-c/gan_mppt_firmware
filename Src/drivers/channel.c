@@ -66,4 +66,5 @@ void channel_init_all(void) {
   sys.ovp_latched = false;
   sys.sweep_id = 0U;
   sys.tick_ms = 0U;
+  sys.state = SYSTEM_STATE_INIT;
 }
