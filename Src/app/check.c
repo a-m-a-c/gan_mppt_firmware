@@ -17,7 +17,7 @@ typedef enum {
 static bool check_flt_lines(void) {
   if (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_15) == GPIO_PIN_SET) return false; // CHA
   if (HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_11) == GPIO_PIN_SET) return false; // CHB
-  if (HAL_GPIO_ReadPin(GPIOD, GPIO_PIN_14) == GPIO_PIN_SET) return false; // CHC
+  if (HAL_GPIO_ReadPin(GPIOD, GPIO_PIN_4) == GPIO_PIN_SET) return false; // CHC
   if (HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_3) == GPIO_PIN_SET) return false; // CHD
   if (HAL_GPIO_ReadPin(GPIOG, GPIO_PIN_10) == GPIO_PIN_SET) return false; // CHE
   if (HAL_GPIO_ReadPin(OVP_GPIO_Port, OVP_Pin) == GPIO_PIN_SET) return false; // OVP

@@ -2,6 +2,14 @@
 #include "hrtim.h"
 #include "main.h"
 
+/* HRTIM kernel clock. Not a tunable - it follows the PLL chain set up in
+   SystemClock_Config(): HSE 8 MHz -> PLLM 1 -> PLLN 120 -> VCO 960 MHz ->
+   PLLP 2 -> 480 MHz SYSCLK, with RCC_HRTIM1CLK_CPUCLK selecting the CPU clock
+   rather than the APB2 timer clock. That gives 2.0833 ns per tick. Every
+   period and dead-time conversion below is derived from it, so it must be
+   revisited if the PLL chain changes. See .agents/hardware.md. */
+#define PWM_KERNEL_CLOCK_HZ 480000000U
+
 #define ALL_TIMERS                                                         \
   (HRTIM_TIMERID_TIMER_A | HRTIM_TIMERID_TIMER_B | HRTIM_TIMERID_TIMER_C | \
    HRTIM_TIMERID_TIMER_D | HRTIM_TIMERID_TIMER_E)
