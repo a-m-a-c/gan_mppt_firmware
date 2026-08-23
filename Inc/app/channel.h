@@ -28,7 +28,6 @@ typedef struct
 typedef struct
 {
   uint32_t frequency_hz;
-  uint16_t duty_commanded;
   uint16_t duty_applied;
   uint16_t dead_time_ns;
   pwm_state_t op_state;

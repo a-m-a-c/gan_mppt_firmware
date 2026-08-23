@@ -47,7 +47,6 @@ void channel_init_all(void) {
        at zero - pass-through - for the reasons in config.h; pwm_init() reads
        these back out and programs them, so they must be in place first. */
     ch->pwm.frequency_hz = PWM_DEFAULT_FREQUENCY_HZ;
-    ch->pwm.duty_commanded = PWM_DEFAULT_DUTY_CYCLE;
     ch->pwm.duty_applied = PWM_DEFAULT_DUTY_CYCLE;
     ch->pwm.dead_time_ns = PWM_DEFAULT_DEAD_TIME_NS;
     ch->pwm.op_state = PWM_STATE_UNINITIALIZED;
