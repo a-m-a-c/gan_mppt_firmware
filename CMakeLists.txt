@@ -58,6 +58,9 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Src/app/status.c
     Src/app/modes/mode.c
     Src/app/command.c
+    Src/app/modes/mode_mppt.c
+    Src/app/modes/mode_single_ch_mppt.c
+    Src/app/modes/mode_single_ch_cv.c
 )
 
 # Add include paths

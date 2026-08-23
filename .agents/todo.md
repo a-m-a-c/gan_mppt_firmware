@@ -10,3 +10,6 @@ This will be command.c and commmand.h, with a single source of truth for referen
 
 ## Check state needs to check for active system OCP and OVP faults.
 Title explains it all.
+
+## Timeouts, put them everywhere
+type shit

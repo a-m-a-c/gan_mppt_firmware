@@ -27,9 +27,9 @@ Agreed 2026-08-15. The sections above are unchanged.
   functions, the types, and the invariant each one protects, and get agreement
   before producing code. Without a hard gate, agents drift into writing the
   whole module instead of the bare interface asked for above.
-- **Say whether a change was verified or only compiled.** There is no automated
-  test suite; verification is manual, on hardware. An agent can only get code
-  to build. Never report a hardware behaviour as confirmed.
+- **Say whether a change was verified or only compiled.** An agent can only get
+  code to build; never report a hardware behaviour as confirmed. The bench loop
+  is in [workflow.md](workflow.md#testing).
 - **Numbers carry their arithmetic.** Any limit, threshold or cadence is
   written down with the calculation that produced it — in the comment next to
   it, and in [hardware.md](hardware.md) if it comes from the board.

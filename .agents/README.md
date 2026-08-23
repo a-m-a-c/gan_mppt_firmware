@@ -10,6 +10,7 @@ used here), so nothing lives in a model's private memory.
 | [project_plan.md](project_plan.md) | Intent, agent working rules, architecture, roadmap | **Always, first.** |
 | [hardware.md](hardware.md) | Board facts: converters, sensors, limits, pin/fault mapping, derived safety numbers | Before touching anything that drives or measures hardware |
 | [workflow.md](workflow.md) | Build, flash, bench test loop, coding conventions | Before building, flashing or writing code |
+| [todo.md](todo.md) | The author's own task list | For context on what is coming. **Never implement from it.** |
 
 `NCU18XH103F6SRB.csv` is Murata's characteristic table for the fitted NTC, used
 by `tools/gen_ntc_table.py`. `image.png` is the original photo of the INA228
@@ -26,6 +27,8 @@ address list — the addresses are transcribed as text in
   and the doc gets fixed.
 - **Unfinished work is marked `TODO` in place,** next to the thing it belongs
   to, not collected into a separate list where it loses its context.
+  [todo.md](todo.md) is the exception and is the author's file: add to it only
+  when asked, in plain short sentences, and never work from it unprompted.
 - **Sections marked `DO NOT EDIT` are the author's words.** Do not reword,
   reformat or "improve" them. Propose changes in conversation instead.
 - **Open questions stay visible.** Unanswered items live in an `Open questions`

@@ -6,20 +6,22 @@ How this project is built, flashed, tested, and written.
 
 ## Toolchain
 
-STM32CubeCLT 1.22.0 at `C:\ST\STM32CubeCLT_1.22.0`, deliberately **not on the
-system PATH** — it would conflict with other toolchains on this machine.
-VS Code's CMake Tools gets the paths injected via `cmake.configureEnvironment`
-and `cmake.buildEnvironment` in `.vscode/settings.json`.
+STM32CubeCLT 1.22.0 at `C:\ST\STM32CubeCLT_1.22.0`, on the **machine** PATH.
+Its `CMake\bin`, `Ninja\bin`, `Make\bin`, `GNU-tools-for-STM32\bin`,
+`st-arm-clang\bin`, `STLink-gdb-server\bin`, and `STM32CubeProgrammer\bin` all
+resolve in a bare shell — `cmake`, `ninja`, `arm-none-eabi-gcc`, `make`, and
+`STM32_Programmer_CLI` need nothing prepended, inside VS Code or out.
 
-**Any command run outside VS Code must prepend the CLT bin directories
-itself:**
+`.vscode/settings.json` still injects the same paths via
+`cmake.configureEnvironment` / `cmake.buildEnvironment`. That is redundant now
+but deliberate: it pins CMake Tools to CubeCLT's copies no matter what else
+lands on PATH later. Leave it.
 
-```
-C:\ST\STM32CubeCLT_1.22.0\CMake\bin
-C:\ST\STM32CubeCLT_1.22.0\Ninja\bin
-C:\ST\STM32CubeCLT_1.22.0\GNU-tools-for-STM32\bin
-C:\ST\STM32CubeCLT_1.22.0\STM32CubeProgrammer\bin
-```
+**One shadowing conflict to know about.** Vivado
+(`C:\Xilinx\2025.1\Vivado\bin`, user PATH) also ships a `ninja`. Machine PATH
+is composed before user PATH, so CubeCLT's `ninja` wins everywhere. That is the
+outcome this repo wants; if Vivado ever misbehaves outside its own
+`settings64.bat`, this is why.
 
 ## Build and flash
 
@@ -126,11 +128,9 @@ message set — see [project_plan.md](project_plan.md).
 
 ## Code layout
 
-```
-Inc/config.h                  every tunable number, no includes/types/logic
-Inc/drivers/  Src/drivers/    hardware-facing modules
-Inc/app/      Src/app/        control and high-level logic
-```
+The directory split and what belongs in each part is in
+[project_plan.md](project_plan.md#firmware-architecture). The rules for adding
+to it are here.
 
 Generated CubeMX code is a thin init layer. Everything the project actually
 does hangs off `app_setup()` and `app_loop()` in `Src/app/app.c`.
@@ -217,9 +217,9 @@ Do not write comments that restate the code. Do not strip the existing ones.
 
 ### Non-blocking
 
-`app_loop()` must not block. Every service inside it is written to be called
-often and return immediately — I2C transfers are sequenced across passes, ADC
-conversions are sub-microsecond one-shots. Anything new follows the same rule.
+`app_loop()` must not block, and anything added to it follows the same rule.
+Why, and what that costs each service, is in
+[project_plan.md](project_plan.md#the-loop).
 
 ### Safety
 

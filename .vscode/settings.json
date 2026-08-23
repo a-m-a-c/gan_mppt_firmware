@@ -1,7 +1,9 @@
 {
   // Use the CMake + Ninja + ARM GCC that ship with STM32CubeCLT.
-  // These tools are NOT on the system PATH, so we inject them here for
-  // CMake Tools' configure and build steps. The generated toolchain file
+  // These are on the machine PATH already, so this injection is redundant --
+  // it is kept deliberately to pin CMake Tools' configure and build steps to
+  // CubeCLT's copies regardless of what else lands on PATH later (Vivado also
+  // ships a ninja). The generated toolchain file
   // (cmake/gcc-arm-none-eabi.cmake) finds "arm-none-eabi-gcc" via PATH.
   "cmake.cmakePath": "C:/ST/STM32CubeCLT_1.22.0/CMake/bin/cmake.exe",
   "cmake.useCMakePresets": "always",

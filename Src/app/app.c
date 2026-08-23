@@ -15,6 +15,7 @@
 #include "status.h"
 #include "channel_telem.h"
 #include "mode.h"
+#include "command.h"
 
 volatile bool error_flag = false; // Global error flag, set to true when something I did not expect occurs.
 
@@ -39,14 +40,18 @@ void app_setup(void) {
 static system_state_t prev_state = SYSTEM_STATE_INIT;
 
 void app_loop(void) {
-  const bool entered = (sys.state != prev_state);
+  /* Always on Services*/
+  system_command_service(); // Get fresh commands.
+  if (system_command_received(SYSTEM_COMMAND_RESET)) sys.state = SYSTEM_STATE_RESET; // Check for reset
+
+  const bool entered = (sys.state != prev_state); // Check for state transition
   prev_state = sys.state;
 
   switch (sys.state) {
 
     /* ------------------------------- INIT STATE -------------------------------*/
     case SYSTEM_STATE_INIT: {
-      /* TRANSITION LOGIC */
+      /* ONGOING BEHAVIOUR */
       sys.state = SYSTEM_STATE_CHECK;
       break;
     }
@@ -59,7 +64,6 @@ void app_loop(void) {
       /* ONGOING BEHAVIOUR */
       check_result_t result = check_service();
 
-      /* TRANSITION LOGIC */
       switch (result) {
         case CHECK_RUNNING:
           break;
@@ -79,13 +83,8 @@ void app_loop(void) {
       if (entered) pwm_stop_all();
 
       /* ONGOING BEHAVIOUR */
-      // Poll for starting requests here perhaps?
-      // Update sys.mode here after looking at incoming comms messages?
-      uint32_t temp_mode_selection = MODE_SINGLE_CH_CV; // Will come from comm checking
+      sys.mode = system_command_requested_mode();
 
-      sys.mode = temp_mode_selection;
-
-      /* TRANSITION LOGIC */
       if (sys.mode != MODE_NONE) sys.state = SYSTEM_STATE_ACTIVE;
       break;
     }
@@ -111,9 +110,9 @@ void app_loop(void) {
       if (sys.state != SYSTEM_STATE_ACTIVE) break;
 
       /* ONGOING BEHAVIOUR */
-      mode_state_t state = mode_service(sys.mode);
+      const bool stop_request = system_command_received(SYSTEM_COMMAND_STOP);
+      mode_state_t state = mode_service(stop_request);
 
-      /* TRANSITION LOGIC */
       switch (state) {
         case MODE_STATE_INIT:
           break;
@@ -135,14 +134,22 @@ void app_loop(void) {
     case SYSTEM_STATE_FAULTED: {
       /* ENTRY BEHAVIOUR */
       if (entered) pwm_stop_all();
-
       /* ONGOING BEHAVIOUR */
-      // Polling for recovery message, temp for now.
-      bool temp_do_recover = true;
-
-      /* TRANSITION LOGIC */
-      if (temp_do_recover) sys.state = SYSTEM_STATE_CHECK; // After fault, run checks again.
-
+      if (system_command_received(SYSTEM_COMMAND_CLEAR_FAULT)) {
+        sys.state = SYSTEM_STATE_CHECK;
+        break;
+      }
+      break;
+    }
+    
+    /* ------------------------------- RESET STATE -------------------------------*/
+    case SYSTEM_STATE_RESET: {
+      /* ENTRY BEHAVIOUR */
+      if (entered) {
+        pwm_stop_all();
+        HAL_NVIC_SystemReset(); // Reset the MCU.
+      }
+      error_flag = true; // Should never get here, but if we do, set the error flag.
       break;
     }
 
@@ -158,4 +165,5 @@ void app_loop(void) {
   analog_service();
   status_service();
   telem_service();
+  system_command_flush_all(); // Flush commands.
 }

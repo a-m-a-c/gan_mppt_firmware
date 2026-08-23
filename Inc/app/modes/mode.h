@@ -23,6 +23,6 @@ typedef enum {
 } mode_init_result_t;
 
 mode_init_result_t mode_begin(mode_t mode);
-mode_state_t mode_service(mode_t mode);
+mode_state_t mode_service(bool stop_request);
 
 #endif /* MODE_MANAGER_H */
