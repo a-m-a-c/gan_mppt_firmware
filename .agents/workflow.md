@@ -11,7 +11,8 @@ system PATH** — it would conflict with other toolchains on this machine.
 VS Code's CMake Tools gets the paths injected via `cmake.configureEnvironment`
 and `cmake.buildEnvironment` in `.vscode/settings.json`.
 
-**Any command run outside VS Code must prepend the CLT bin directories itself:**
+**Any command run outside VS Code must prepend the CLT bin directories
+itself:**
 
 ```
 C:\ST\STM32CubeCLT_1.22.0\CMake\bin
@@ -20,28 +21,20 @@ C:\ST\STM32CubeCLT_1.22.0\GNU-tools-for-STM32\bin
 C:\ST\STM32CubeCLT_1.22.0\STM32CubeProgrammer\bin
 ```
 
-## Build
+## Build and flash
 
-CMake presets, Ninja generator, output in `build/<preset>/`.
-
-| Preset | |
-|---|---|
-| `Debug` | the one normally used |
-| `Release` | |
+CMake presets, Ninja generator, output in `build/<preset>/`. `Debug` is the one
+normally used; `Release` exists.
 
 In VS Code: **Ctrl+Shift+B** runs the default task `Build & Flash` (`CMake:
-build` → `Flash (ST-LINK)`), no debug session. **F5** launches the debugger
-instead.
+build` → `Flash (ST-LINK)`), no debug session. **F5** launches the debugger.
 
-## Flash
-
-ST-LINK over SWD, via STM32CubeProgrammer CLI:
+Flashing is ST-LINK over SWD, via the STM32CubeProgrammer CLI. `-rst` means the
+board starts running immediately:
 
 ```
 STM32_Programmer_CLI.exe -c port=SWD -w build/Debug/gan_mppt_firmware.elf -v -rst
 ```
-
-`-rst` means the board starts running immediately.
 
 ### ST-LINK recovery
 
@@ -66,106 +59,90 @@ application, not corruption.
 
 ## Testing
 
-**There is no automated test suite. Verification is manual, on hardware, over
-the serial link.** An agent cannot verify a change here — it can only get it to
-compile. Say which of the two you did.
+**There is no automated test suite. Verification is manual, on hardware.** An
+agent cannot verify a change here — it can only get it to compile. Say which of
+the two you did.
+
+The loop:
+
+1. Build and flash (Ctrl+Shift+B).
+2. Confirm the board reaches STANDBY — `LED_ERR` dark, and `LED_OUT_CONN`
+   tracking the bus.
+3. Exercise the change. **Scope first, power second** for anything that alters
+   switching behaviour.
+4. Record anything learned about the board in [hardware.md](hardware.md).
+
+> **TODO — the host link is gone, so step 2 is currently LEDs and a debugger.**
+> The serial command/telemetry module was removed in `efaf6bb`. Until it comes
+> back there is no `#cfg`, no telemetry CSV, and the tools below cannot talk to
+> the board.
 
 ### Host tools
 
-Python tooling runs under **`uv`, never `pip`**. Single-file scripts carry PEP
-723 inline dependency metadata, so `uv run` is the whole setup — no venv, no
-`requirements.txt`, no `pyproject.toml`.
+Python tooling runs under **`uv`, never `pip`**. Single-file scripts carry
+PEP 723 inline dependency metadata, so `uv run` is the whole setup — no venv,
+no `requirements.txt`, no `pyproject.toml`.
 
 ```
 uv run tools/telem_gui.py          # web GUI: live plots + PWM control
 uv run tools/stream_telem.py       # terminal CSV stream, quick sanity check
-uv run tools/stream_telem.py --adc # + raw ADC pin voltages and self-checks
 uv run tools/telem_gui.py --list   # show candidate serial ports
-uv run tools/gen_ntc_table.py      # regenerate Inc/drivers/ntc_table.h
+uv run tools/gen_ntc_table.py      # regenerate an NTC lookup table
 ```
 
 `telem_gui.py` is the primary bench tool: it plots any selection of telemetry
 series over a chosen span, shows every field as a live number in the readout
-grid below the plot, and sends PWM commands back over the same link. Readout
-boxes double as the series toggles. It drives a live power stage — nothing is
-energised until Start is pressed, but the duty slider applies as it moves, on a
-running channel included.
+grid below, and sends commands back over the same link. Readout boxes double as
+the series toggles. It drives a live power stage — nothing is energised until
+Start is pressed, but the duty slider applies as it moves, on a running channel
+included.
 
-The **inductor sensing panel** starts and stops sampling, sets the sample point
-and recalibrates the zero. It reports **samples per second, not a total** —
-a state of `running` with a rate of `0/s` means the HRTIM trigger is not
-firing, which every other indicator on the page would show as healthy. The
-calibrated zero counts are printed beneath it, because every current on the
-plot is measured against them.
+These scripts are the living record of the wire format the firmware used to
+speak, and are the reference for rebuilding it.
 
-**The plot has two axes, left and right**, claimed by whichever units are
-selected, in series order. Volts, amps and degrees at once is one unit too
-many; the odd one out is named in the status line rather than silently not
-drawn. The readout grid always shows every field regardless.
+### Serial protocol — TODO, not implemented
 
-### The loop
-
-1. Build and flash (Ctrl+Shift+B).
-2. `uv run tools/telem_gui.py` — confirm telemetry is streaming and `#cfg` lines
-   show the expected configuration.
-3. Exercise the change. **Scope first, power second** for anything that alters
-   switching behaviour.
-4. Record anything learned about the board in [hardware.md](hardware.md), and
-   anything decided in [decisions.md](decisions.md).
-
-### Serial protocol
-
-UART5, 115200 baud. One command per line (CR, LF or both). Channels are `a`–`e`,
-`1`–`5` or `all`; verbs are case-insensitive.
+UART5, 115200 baud, one command per line (CR, LF or both). Channels are `a`–`e`,
+`1`–`5` or `all`; verbs case-insensitive. The grammar the removed module spoke,
+in full, is `git show efaf6bb^:Inc/app/command.h`. In outline:
 
 ```
 set <ch> freq <hz>       set <ch> duty <tenths>     set <ch> dt <ns>
 init <ch>                start <ch>                 stop <ch>
 clear <ch>               clear ovp                  get
-adc                      iind                       iind start | stop
-iind zero                iind point <tenths>
 ```
 
-Out-of-range values are **rejected, not clamped** — quietly substituting a
+Board → host: everything starting with `#` is a reply or report
+(`#cfg,...` / `#ok,...` / `#err,...`); everything else is the telemetry CSV.
+
+**Out-of-range values are rejected, not clamped.** Quietly substituting a
 different number hides the difference between "applied" and "nearly applied".
 The driver's own clamps are the backstop for internal callers.
 
-Board → host: everything starting with `#` is a reply or report (`#cfg,...` /
-`#iind,...` / `#ok,...` / `#err,...` / `#adc,...`); everything else is the
-28-field telemetry CSV — `tick_ms, valid_mask, vbus_mv`, then five groups of
-`vin_mv, iin_ma, vout_mv, iout_ma, iind_ma`. `valid_mask` bits 0..4 flag I2C
-current data per channel, bits 5..9 flag live inductor sampling. `#cfg` and
-`#iind` ride the same 1 s cadence and are the authority on what is in force.
-Full grammar in [command.h](../Inc/app/command.h).
-
-**Temperature is not reported.** `analog.c` still samples and converts the
-NTCs, but the divider on the board is not understood — see
-[decisions.md](decisions.md) 027 — so nothing consumes it. The `adc` command
-still reports raw ADC pin voltages, VREFINT against its factory constant, and
-an ADC1/ADC2 cross-check; `stream_telem.py --adc` polls it.
+When this is rebuilt it is **transport-agnostic** — FDCAN carries the same
+message set — see [project_plan.md](project_plan.md).
 
 ---
 
 ## Code layout
 
 ```
-Inc/config.h        every tunable number, no includes/types/logic
+Inc/config.h                  every tunable number, no includes/types/logic
 Inc/drivers/  Src/drivers/    hardware-facing modules
 Inc/app/      Src/app/        control and high-level logic
 ```
 
-Generated CubeMX code is a thin init layer. Everything the project actually does
-hangs off `app_setup()` and `app_loop()` in `Src/app/app.c`.
+Generated CubeMX code is a thin init layer. Everything the project actually
+does hangs off `app_setup()` and `app_loop()` in `Src/app/app.c`.
 
 - **New sources** go in the top-level `CMakeLists.txt` at the
   `# Add user sources here` line in `target_sources()`; include paths at
   `# Add user defined include paths`.
-- **Init calls** go in `USER CODE BEGIN 2` in `main.c` — in practice, inside
-  `app_setup()` instead.
-- **Never edit generated code outside `USER CODE` markers.** The `.ioc` is still
-  actively edited and regenerated, and anything outside the markers is silently
-  clobbered. One regeneration on 2026-07-25 deleted `main()` *including* its
-  USER CODE blocks — **commit before regenerating.**
+- **Init calls** go inside `app_setup()`, not `main.c`.
+- **Never edit generated code outside `USER CODE` markers.** The `.ioc` is
+  still actively edited and regenerated, and anything outside the markers is
+  silently clobbered. One regeneration on 2026-07-25 deleted `main()`
+  *including* its USER CODE blocks — **commit before regenerating.**
 
 ---
 
@@ -175,8 +152,8 @@ Derived from the existing code. Match it; do not introduce a second style.
 
 ### Brace style
 
-Opening brace on the same line, for functions and for control statements
-alike:
+Opening brace on the same line, for functions and control statements alike.
+`pwm.c` is the reference:
 
 ```c
 void led_init(void) {
@@ -187,9 +164,6 @@ void led_init(void) {
   }
 }
 ```
-
-`pwm.c` is the reference. Some older files are still in the other style; they
-get converted as they are touched, not in a separate sweep.
 
 ### Naming and structure
 
@@ -203,6 +177,8 @@ get converted as they are touched, not in a separate sweep.
 - One module = one `.c`/`.h` pair with a doxygen banner header carrying
   `@file`, `@author`, `@brief` and the licence block. Include guards are bare
   `MODULE_H`.
+- **Drivers publish into `sys` and `channel_x` and keep no second copy.** There
+  is one home for a number.
 - Public setters are the single path to hardware; `init` composes them rather
   than duplicating their register writes.
 
@@ -215,8 +191,8 @@ only** — the logic lives in a function in the owning module.
 
 ### HAL vs registers
 
-**Use the HAL by default.** Drop to `SET_BIT`/`CLEAR_BIT` only where it is
-genuinely necessary, and flag it in a comment. Established legitimate reasons:
+**Use the HAL by default.** Drop to `SET_BIT`/`CLEAR_BIT` only where genuinely
+necessary, and flag it in a comment. Established legitimate reasons:
 
 - **Lock-sensitive / ISR-reachable paths.** Most HAL calls start with
   `__HAL_LOCK` and return `HAL_BUSY` doing nothing if the handle is already
@@ -234,7 +210,7 @@ HAL call.
 The distinctive thing about this codebase, and worth preserving: **comments
 explain why, and quantify.** They carry the arithmetic that justifies a number,
 the failure mode a guard exists to prevent, and the constraint a caller must
-respect. See the header of `Inc/config.h` or `Inc/app/control.h` for the
+respect. `Inc/drivers/led.h` and `Inc/drivers/channel_telem.h` are the
 standard.
 
 Do not write comments that restate the code. Do not strip the existing ones.
@@ -243,8 +219,7 @@ Do not write comments that restate the code. Do not strip the existing ones.
 
 `app_loop()` must not block. Every service inside it is written to be called
 often and return immediately — I2C transfers are sequenced across passes, ADC
-conversions are sub-microsecond one-shots, serial is ring-buffered. Anything new
-in the loop follows the same rule.
+conversions are sub-microsecond one-shots. Anything new follows the same rule.
 
 ### Safety
 

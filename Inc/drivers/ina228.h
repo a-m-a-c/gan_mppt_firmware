@@ -26,10 +26,8 @@ uint8_t ina228_register(ina228_quantity_t quantity);
 uint16_t ina228_register_size(ina228_quantity_t quantity);
 float ina228_decode(const ina228_t *dev, ina228_quantity_t quantity, const uint8_t *raw);
 
-// Blocking
+/* Blocking. Verifies the part answers, resets it, and writes SHUNT_CAL and
+   ADC_CONFIG. The only blocking call left - every reading is taken by the
+   interrupt-driven sweep in channel_telem.c using the three functions above. */
 bool ina228_init(ina228_t *dev);
-bool ina228_read_bus_voltage(ina228_t *dev, float *volts);
-bool ina228_read_shunt_voltage(ina228_t *dev, float *volts);
-bool ina228_read_current(ina228_t *dev, float *amps);
-bool ina228_read_power(ina228_t *dev, float *watts);
 #endif /* INA228_H */

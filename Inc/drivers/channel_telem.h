@@ -3,51 +3,18 @@
 
 #include <stdbool.h>
 #include <stdint.h>
-#include "ina228.h"
-#include "pwm.h"
 
+/* Two INA228s per channel on I2C1, input side and output side.
+ *
+ * This module owns the sensors, not the data: every reading lands in
+ * channel_x.telem and there is no second copy here. The I2C addresses and the
+ * device handles are private, so a caller names a channel and nothing else.
+ *
+ * Everything soft-fails - telemetry loss must never halt the converter. */
 
-#define TELEM_HISTORY_DEPTH 32U
-
-
-// A sample of the data for a given channel.
-typedef struct
-{
-  uint32_t tick_ms; /* HAL_GetTick() when the sample was taken */
-  float vin_v;
-  float iin_a;
-  float vout_v;
-  float iout_a;
-} telem_sample_t;
-
-// Representing a telemetry channel.
-typedef struct
-{
-  uint32_t number;
-  ina228_t input;
-  ina228_t output;
-  telem_sample_t latest;
-  bool valid;           /* last init/update fully succeeded */
-  uint32_t error_count; /* total failed inits/updates */
-  telem_sample_t history[TELEM_HISTORY_DEPTH];
-  uint32_t history_head;
-  uint32_t history_count;
-} telem_channel_t;
-
-// Channel information.
-extern telem_channel_t telem_a;
-extern telem_channel_t telem_b;
-extern telem_channel_t telem_c;
-extern telem_channel_t telem_d;
-extern telem_channel_t telem_e;
-
-/* All functions soft-fail (return false, bump error_count) on sensor/I2C
- * errors - telemetry loss must never halt the converter. */
-bool telem_init(telem_channel_t *t);
-
-/* Blocking refresh of one channel: four I2C reads, ~2 ms. Kept for bench use
- * and one-shot reads. The steady-state path is telem_service(). */
-bool telem_update(telem_channel_t *t);
+/* Blocking: configures both sensors on one channel. Call once per channel from
+ * app_setup(), before telem_start_sweeps(). */
+bool telem_init(uint32_t channel);
 
 /* Enables the I2C1 interrupt and arms the first sweep. Call once from
  * app_setup(), after every telem_init() - those use blocking reads and must
@@ -59,25 +26,20 @@ void telem_start_sweeps(void);
  * every TELEM_SWEEP_PERIOD_MS and advances the one in flight, returning in a
  * few microseconds either way.
  *
- * A channel's four values are always committed together, so `latest` and
- * `valid` never show a half-updated channel. Different channels are sampled up
- * to one sweep apart - telem_sweep_age_ms() says how stale the set is. */
+ * A channel's four values are committed together, so channel_x.telem never
+ * shows a half-updated channel. Different channels are sampled up to one sweep
+ * apart - telem_sweep_age_ms() says how stale the set is. */
 void telem_service(void);
-
-/* Increments once per completed sweep. A consumer that must act on fresh data
- * only - the MPPT loop - watches this rather than a timer. */
-uint32_t telem_sweep_id(void);
 
 /* Milliseconds since the last sweep completed. */
 uint32_t telem_sweep_age_ms(void);
+
+/* Total failed inits and updates for one channel, since boot. */
+uint32_t telem_error_count(uint32_t channel);
 
 /* I2C1 completion hooks, called from the HAL callbacks in interrupts.c. Not
  * for application use. */
 void telem_i2c_complete(void);
 void telem_i2c_error(void);
-
-/* age 0 = newest stored sample, 1 = one before it, ... Returns false once
- * age reaches the number of samples stored so far. */
-bool telem_history_get(const telem_channel_t *t, uint32_t age, telem_sample_t *out);
 
 #endif /* CHANNEL_TELEM_H */

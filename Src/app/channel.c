@@ -4,22 +4,21 @@
 
 #include "config.h"
 
-channel_t chan_a;
-channel_t chan_b;
-channel_t chan_c;
-channel_t chan_d;
-channel_t chan_e;
-system_t sys;
+channel_t channel_a;
+channel_t channel_b;
+channel_t channel_c;
+channel_t channel_d;
+channel_t channel_e;
 
 /* For code that iterates - the host reporter walks all five to build its #cfg
    lines. Code that knows which channel it wants should name it directly. */
 channel_t *channel_by_id(uint32_t id) {
   switch (id) {
-    case CHANNEL_A: return &chan_a;
-    case CHANNEL_B: return &chan_b;
-    case CHANNEL_C: return &chan_c;
-    case CHANNEL_D: return &chan_d;
-    case CHANNEL_E: return &chan_e;
+    case CHANNEL_A: return &channel_a;
+    case CHANNEL_B: return &channel_b;
+    case CHANNEL_C: return &channel_c;
+    case CHANNEL_D: return &channel_d;
+    case CHANNEL_E: return &channel_e;
     default: break;
   }
   return NULL;
@@ -42,12 +41,7 @@ void channel_init_all(void) {
     ch->telem.vout_v = 0.0f;
     ch->telem.iout_a = 0.0f;
     ch->telem.tick_ms = 0U;
-    ch->telem.seq = 0U;
     ch->telem.valid = false;
-
-    ch->ind.iind_a = 0.0f;
-    ch->ind.seq = 0U;
-    ch->ind.valid = false;
 
     /* The defaults a channel holds before anything configures it. Duty starts
        at zero - pass-through - for the reasons in config.h; pwm_init() reads
@@ -58,13 +52,5 @@ void channel_init_all(void) {
     ch->pwm.dead_time_ns = PWM_DEFAULT_DEAD_TIME_NS;
     ch->pwm.op_state = PWM_STATE_UNINITIALIZED;
     ch->pwm.ocp_latched = false;
-    ch->pwm.seq = 0U;
   }
-
-  sys.vbus_v = 0.0f;
-  sys.vbus_seq = 0U;
-  sys.ovp_latched = false;
-  sys.sweep_id = 0U;
-  sys.tick_ms = 0U;
-  sys.state = SYSTEM_STATE_INIT;
 }

@@ -18,11 +18,13 @@ void pwm_set_frequency(uint32_t channel, uint32_t frequency);
 
 bool pwm_start(uint32_t channel);
 void pwm_stop(uint32_t channel);
-
+void pwm_stop_all(void);
 bool pwm_clear_OCP_fault(uint32_t channel);
 bool pwm_clear_OVP_fault(void);
 
 void pwm_OCP_fault(uint32_t channel);
 void pwm_OVP_fault(void);
+
+
 
 #endif /* PWM_H */

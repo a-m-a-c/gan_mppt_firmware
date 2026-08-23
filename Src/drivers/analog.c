@@ -3,6 +3,7 @@
 #include "adc.h"
 #include "config.h"
 #include "main.h"
+#include "system.h"
 
 /* ADC1 runs 16-bit single-ended off a 3V3 reference. */
 #define ANALOG_FULL_SCALE 65535U
@@ -13,7 +14,6 @@
 #define ANALOG_SAMPLE_TIME   ADC_SAMPLETIME_64CYCLES_5
 #define ANALOG_TIMEOUT_MS 2U
 
-static uint32_t analog_vbus_latest_mv;
 static uint32_t analog_last_sweep_ms;
 
 /* Zero on any failure, which reads as 0 V - out of range for every consumer,
@@ -72,9 +72,7 @@ void analog_service(void) {
   }
   analog_last_sweep_ms = now;
 
-  analog_vbus_latest_mv = raw_to_vbus_mv(analog_read_raw());
-}
-
-uint32_t analog_vbus_mv(void) {
-  return analog_vbus_latest_mv;
+  /* Straight into the shared model - sys.vbus_mv is the one place a consumer
+     looks, the same way channel_x.telem is for the INA228 pairs. */
+  sys.vbus_mv = raw_to_vbus_mv(analog_read_raw());
 }

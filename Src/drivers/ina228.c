@@ -4,11 +4,8 @@
 #define INA228_REG_CONFIG     0x00U
 #define INA228_REG_ADC_CONFIG 0x01U
 #define INA228_REG_SHUNT_CAL  0x02U
-#define INA228_REG_VSHUNT     0x04U
 #define INA228_REG_VBUS       0x05U
-#define INA228_REG_DIETEMP    0x06U
 #define INA228_REG_CURRENT    0x07U
-#define INA228_REG_POWER      0x08U
 #define INA228_REG_MFG_ID     0x3EU
 #define INA228_REG_DEVICE_ID  0x3FU
 
@@ -19,18 +16,15 @@
 
 /* MODE=0xB (continuous shunt+bus, temperature disabled), 1052 us conversions,
  * 16-sample averaging -> a full averaged set every ~34 ms. Dropping the
- * temperature conversion shortens the cycle from ~50 ms and is why
- * ina228_read_die_temp() is not usable with this configuration. */
+ * temperature conversion shortens the cycle from ~50 ms, and is why the
+ * DIETEMP register is not read anywhere. */
 #define INA228_ADC_CONFIG_VALUE 0xBB6AU
 
 #define INA228_I2C_TIMEOUT_MS 10U
 
-/* Scale factors (datasheet section 7.5): fixed LSB weights of the result
- * registers. Current/power scale with current_lsb instead. */
+/* Scale factor (datasheet section 7.5): the fixed LSB weight of VBUS.
+ * CURRENT scales with current_lsb instead, derived per device. */
 #define INA228_VBUS_LSB_V    195.3125e-6f
-#define INA228_VSHUNT_LSB_V  312.5e-9f /* ADCRANGE = 0 (+/-163.84 mV) */
-#define INA228_DIETEMP_LSB_C 7.8125e-3f
-#define INA228_POWER_SCALE   3.2f
 
 /* CURRENT_LSB = Imax / 2^19 and SHUNT_CAL = 13107.2e6 * CURRENT_LSB * Rshunt
    (datasheet section 8.1.2, ADCRANGE = 0). Named so ina228_init() reads like
@@ -89,33 +83,6 @@ static int32_t decode_reg20(const uint8_t *data)
   return (int32_t)raw;
 }
 
-static bool read_reg20(ina228_t *dev, uint8_t reg, int32_t *value)
-{
-  uint8_t data[3];
-
-  if (!read_bytes(dev, reg, data, 3U))
-  {
-    return false;
-  }
-
-  *value = decode_reg20(data);
-  return true;
-}
-
-/* POWER: a full unsigned 24-bit value (no 4-bit pad). */
-static bool read_reg24(ina228_t *dev, uint8_t reg, uint32_t *value)
-{
-  uint8_t data[3];
-
-  if (!read_bytes(dev, reg, data, 3U))
-  {
-    return false;
-  }
-
-  *value = ((uint32_t)data[0] << 16) | ((uint32_t)data[1] << 8) | data[2];
-  return true;
-}
-
 /* --------------------------------------------------------------------------
    Public surface.
    -------------------------------------------------------------------------- */
@@ -153,29 +120,6 @@ float ina228_decode(const ina228_t *dev, ina228_quantity_t quantity, const uint8
   }
 
   return (float)value * INA228_VBUS_LSB_V;
-}
-
-/* Blocking read of one of the quantities the sweep also reads. Routed through
-   ina228_register()/ina228_decode() rather than repeating the register number
-   and the scale factor, so the polled path here and the interrupt-driven
-   sequencer in channel_telem.c cannot disagree about what a register means -
-   they now share the one decode. */
-static bool read_quantity(ina228_t *dev, ina228_quantity_t quantity, float *out)
-{
-  uint8_t raw[3];
-
-  if ((dev == NULL) || (out == NULL))
-  {
-    return false;
-  }
-
-  if (!read_bytes(dev, ina228_register(quantity), raw, ina228_register_size(quantity)))
-  {
-    return false;
-  }
-
-  *out = ina228_decode(dev, quantity, raw);
-  return true;
 }
 
 bool ina228_init(ina228_t *dev)
@@ -217,51 +161,5 @@ bool ina228_init(ina228_t *dev)
   }
 
   return write_reg16(dev, INA228_REG_ADC_CONFIG, INA228_ADC_CONFIG_VALUE);
-}
-
-bool ina228_read_bus_voltage(ina228_t *dev, float *volts)
-{
-  return read_quantity(dev, INA228_QTY_BUS_VOLTAGE, volts);
-}
-
-bool ina228_read_current(ina228_t *dev, float *amps)
-{
-  return read_quantity(dev, INA228_QTY_CURRENT, amps);
-}
-
-bool ina228_read_shunt_voltage(ina228_t *dev, float *volts)
-{
-  int32_t raw;
-
-  if ((dev == NULL) || (volts == NULL))
-  {
-    return false;
-  }
-
-  if (!read_reg20(dev, INA228_REG_VSHUNT, &raw))
-  {
-    return false;
-  }
-
-  *volts = (float)raw * INA228_VSHUNT_LSB_V;
-  return true;
-}
-
-bool ina228_read_power(ina228_t *dev, float *watts)
-{
-  uint32_t raw;
-
-  if ((dev == NULL) || (watts == NULL))
-  {
-    return false;
-  }
-
-  if (!read_reg24(dev, INA228_REG_POWER, &raw))
-  {
-    return false;
-  }
-
-  *watts = (float)raw * INA228_POWER_SCALE * dev->current_lsb;
-  return true;
 }
 

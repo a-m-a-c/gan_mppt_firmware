@@ -1,4 +1,5 @@
 #include "pwm.h"
+#include "system.h"
 #include "hrtim.h"
 #include "main.h"
 
@@ -33,7 +34,7 @@ typedef struct {
 } channel_hw_t;
 
 static const channel_hw_t hw_a = {
-    .data = &chan_a,
+    .data = &channel_a,
     .timer_index = HRTIM_TIMERINDEX_TIMER_A,
     .timer_id = HRTIM_TIMERID_TIMER_A,
     .output1 = HRTIM_OUTPUT_TA1,
@@ -47,7 +48,7 @@ static const channel_hw_t hw_a = {
 };
 
 static const channel_hw_t hw_b = {
-    .data = &chan_b,
+    .data = &channel_b,
     .timer_index = HRTIM_TIMERINDEX_TIMER_B,
     .timer_id = HRTIM_TIMERID_TIMER_B,
     .output1 = HRTIM_OUTPUT_TB1,
@@ -61,7 +62,7 @@ static const channel_hw_t hw_b = {
 };
 
 static const channel_hw_t hw_c = {
-    .data = &chan_c,
+    .data = &channel_c,
     .timer_index = HRTIM_TIMERINDEX_TIMER_C,
     .timer_id = HRTIM_TIMERID_TIMER_C,
     .output1 = HRTIM_OUTPUT_TC1,
@@ -75,7 +76,7 @@ static const channel_hw_t hw_c = {
 };
 
 static const channel_hw_t hw_d = {
-    .data = &chan_d,
+    .data = &channel_d,
     .timer_index = HRTIM_TIMERINDEX_TIMER_D,
     .timer_id = HRTIM_TIMERID_TIMER_D,
     .output1 = HRTIM_OUTPUT_TD1,
@@ -89,7 +90,7 @@ static const channel_hw_t hw_d = {
 };
 
 static const channel_hw_t hw_e = {
-    .data = &chan_e,
+    .data = &channel_e,
     .timer_index = HRTIM_TIMERINDEX_TIMER_E,
     .timer_id = HRTIM_TIMERID_TIMER_E,
     .output1 = HRTIM_OUTPUT_TE1,
@@ -119,7 +120,6 @@ static const channel_hw_t *channel_hw(uint32_t channel) {
 // Controls and updates the status of pwm in each channel.
 static void set_op_state(channel_t *ch, pwm_state_t op_state) {
   ch->pwm.op_state = op_state;
-  ch->pwm.seq++;
 }
 
 
@@ -387,6 +387,19 @@ void pwm_stop(uint32_t channel) {
   }
   exit_critical(primask);
 }
+
+void pwm_stop_all(void) {
+  uint32_t primask = enter_critical();
+  all_channels_stop_hw();
+  for (uint32_t i = 0U; i < CHANNEL_COUNT; i++) {
+    channel_t *ch = channel_hardware[i]->data;
+    if (ch->pwm.op_state == PWM_STATE_RUNNING) {
+      set_op_state(ch, PWM_STATE_STOPPED);
+    }
+  }
+  exit_critical(primask);
+}
+
 
 bool pwm_clear_OCP_fault(uint32_t channel) {
   const channel_hw_t *hw = channel_hw(channel);

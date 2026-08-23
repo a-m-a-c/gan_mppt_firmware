@@ -2,9 +2,9 @@
 
 **Read [`.agents/README.md`](.agents/README.md) before doing anything in this repo.**
 
-That directory is the source of truth for this project, alongside the code
-itself. It holds the project intent, the agent working rules, the board's
-hardware facts, the build/flash/test workflow and the decision log.
+**The code is the authority on what the firmware does.** That directory holds
+what the code cannot say about itself: the project intent, the agent working
+rules, the board's hardware facts, and the build/flash/test workflow.
 
 Nothing project-specific is recorded here, or in any model's private memory,
 because this project is worked on with more than one model. If you learn
