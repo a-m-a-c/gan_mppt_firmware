@@ -3,7 +3,7 @@
 Intent, working rules, and where the firmware is going. Board facts live in
 [hardware.md](hardware.md); build and style in [workflow.md](workflow.md). The
 code is the authority on what exists today; this file is the shape it is
-growing into, with everything unbuilt marked **TODO**.
+growing into. Outstanding work lives in [todo.md](todo.md), not here.
 
 ## Introduction (DO NOT EDIT)
 This is the firmware for a GaN MPPT device with 5 seperate channels. I am writing this document because I feel like I do not understand the way the firmware is going, nor do you understand what I want this to be.
@@ -18,6 +18,8 @@ I would prefer to use cube mx to configure pin settings, do not configure these 
 Append additional context to this file, do not edit sections with "DO NOT EDIT" unless we discuss and deem it to be useful.
 
 This file alongisde the codebase is the main source of truth, and anything else in .agents. Consider the fact that I will be using both GPT5.6 SOL and CLAUDE OPUS 5 in writing this, so avoid model specific memory locations, and instead make a new file inside .agents to store information.
+
+ DO NOT use overly verbose comments. code is self documenting and I can read code well. Use // unles /* style is required for longer comments. Often a single line or two is plenty.
 
 ## Working Agreement
 
@@ -59,11 +61,16 @@ the system state machine, then the services that run in every state:
 
 ```
 app_loop()
-  switch (sys.state)     INIT -> CHECK -> STANDBY, plus ACTIVE and FAULTED
-  analog_service()       bus voltage off ADC1, every ANALOG_PERIOD_MS
-  status_service()       LEDs from state; pure reads, no I/O
-  telem_service()        advances one INA228 I2C transfer per pass
+  system_command_service()    decode transports -> command state
+  switch (sys.state)          INIT -> CHECK -> STANDBY -> ACTIVE, plus FAULTED, RESET
+  analog_service()            bus voltage off ADC1, every ANALOG_PERIOD_MS
+  status_service()            LEDs from state; pure reads, no I/O
+  telem_service()             advances one INA228 I2C transfer per pass
+  system_command_flush_all()  clear commands; anything unacted on is rejected
 ```
+
+The command service and flush **straddle** the state machine deliberately, and
+merging or reordering them breaks it - see "Commands" below.
 
 **Nothing in the loop blocks.** Every service is written to be called often and
 return immediately — I2C transfers are sequenced across passes, ADC conversions
@@ -78,10 +85,12 @@ Two places, and they are where to look for anything:
 - **`channel_a` .. `channel_e`** (`Inc/app/channel.h`) — everything about one
   channel: its telemetry sample, its PWM configuration and operating state.
 
-Drivers publish into these structs and keep no second copy. `channel_x.pwm`
-already carries `duty_commanded` alongside `duty_applied` — asked-for and
-actual, side by side, which is the pattern the rest of the control path
-follows.
+Drivers publish into these structs and keep no second copy: `channel_x.pwm`
+carries `duty_applied`, written by `pwm.c` after it programs the compare
+register, so a command the driver rejected shows up as the duty not moving. A
+`duty_commanded` field existed and was removed - nothing wrote it. The
+asked-for/actual pair arrives with the duty gate, which is what will have
+something to put in it.
 
 ### The system state machine
 
@@ -89,17 +98,20 @@ The `switch` in `app_loop()` is the machine; `system_state_t` is the list of
 states. `INIT → CHECK → STANDBY` runs today, with the bring-up checklist in
 `check.c`.
 
-`FAULTED` is reachable from any state, stops all five channels on entry, and is
-left **only by rebooting** — no clear-in-place, no auto-recovery. OVP latches
-it. Per-channel OCP does **not**: one channel tripping must not take the other
-four down.
+`FAULTED` stops all five channels on entry and is left only on an explicit
+`CLEAR_FAULT`, which routes back through `CHECK` so the board re-runs its
+bring-up before it can start again. It does not self-clear. Per-channel OCP
+does **not** reach it: one channel tripping must not take the other four down.
 
-**TODO — STANDBY has no exit and ACTIVE is empty.** Nothing arms itself: the
-board leaves STANDBY only on a command from the car computer over FDCAN, or the
-same command over serial. That is deliberate. The car computer is the thing
-that knows the battery's state, whether the car is running, and whether
-charging is wanted at all, so the firmware does not guess at a decision another
-node already owns.
+`RESET` is a state rather than an inline call, so the reset is visible in the
+machine: its entry stops the outputs, then resets the MCU. A `RESET` command is
+honoured from every state, checked once before the switch.
+
+**The board never arms itself.** It leaves STANDBY only on a command from the
+car computer over FDCAN, or the same command over serial. That is deliberate -
+the car computer knows the battery's state, whether the car is running, and
+whether charging is wanted at all, so the firmware does not guess at a decision
+another node already owns.
 
 **There is one run state, `ACTIVE`, and a system-level mode inside it.**
 Decided 2026-08-23, replacing an earlier design that made each mode its own
@@ -111,10 +123,6 @@ The objection to a mode field was that modes differ in what they *permit*, not
 just in which regulator runs — so a field inside one state silently changes
 what that state means. **`mode.c` is the answer to that**: the permissions
 belong to the mode, not to `sys`. See "Modes" below.
-
-**TODO — the CHECK checklist is partly stubbed.** `check.c` reads the five FLT
-lines and OVP; the INA228 sweep and the inductor zero calibration return true
-without doing anything.
 
 ### The channel state machine — TODO, not designed
 
@@ -134,7 +142,7 @@ measured bus at all, so a closed loop there winds up against a constant error
 and slams on conduction. Conduction is detected on the channel's own **output
 current**, never on a voltage. `ACTIVE` is where the mode's regulator runs.
 
-### The control stack — TODO, none of it is written
+### The control stack — mostly unwritten
 
 ```
   SOURCES        GUI / serial        MPPT algorithm        FDCAN
@@ -173,17 +181,53 @@ Three rules hold it together, and they are the load-bearing part of this file:
 `pwm.c` is the safety boundary underneath all of it: static clamps, fault
 latches, and the critical sections around output enable/disable.
 
-### Commands — TODO
+### Commands
 
 The car computer drives the board over FDCAN, and **serial carries the same
-message set**: same commands, same arguments, same replies. Neither transport is
-privileged, so the bench exercises the real control path rather than a parallel
-debug one. One command type, two codecs — the transports themselves are drivers,
-the decode and dispatch is app code.
+message set**. Neither transport is privileged, so the bench exercises the real
+control path rather than a parallel debug one. One command type, two codecs -
+the transports are drivers, the decode and dispatch is app code.
+
+The consumer side is built (`Inc/app/command.h`); nothing decodes yet, and
+`command.c` is a temporary stub that asks for CV a second after boot.
+
+**Commands are split by consumer, and that split is what makes the design
+work.** System commands (`system_commands_t`) are consumed only by `app.c`;
+mode commands will be consumed only by the running mode. One command, one
+consumer, so no two readers can steal a flag from each other - and because the
+tiers are separate enum types, the compiler enforces it.
+
+```c
+mode_t system_command_requested_mode(void);          /* MODE_NONE if none pending */
+bool   system_command_received(system_commands_t c); /* pure read, no side effect */
+void   system_command_service(void);                 /* decode; the only setter   */
+void   system_command_flush_all(void);               /* the only clearer          */
+```
+
+Four invariants hold it together:
+
+- **Within one pass the command state is immutable.** `service()` sets it at
+  the top, the state machine reads it as many times as it likes, `flush_all()`
+  clears it at the bottom. Reads are pure, so two states polling the same
+  command get the same answer in either order.
+- **The two calls must straddle the state machine.** Both at the bottom and
+  every command is a pass stale; `flush_all()` anywhere before the switch and
+  commands are wiped before any state sees them. Both failures are silent.
+- **Interrupts deliver bytes, never commands.** A flag set from an ISR could
+  land after the state machine has run and be cleared before anything saw it.
+  Keeping the flags single-writer - main loop only - also removes every
+  atomicity question; the transport ring is the only concurrent structure.
+- **One slot, latest wins.** `RUN_*` and `STOP` are contradictory instructions
+  about the same thing, so holding both is meaningless. A single slot resolves
+  it for free and forces a host to sequence `CLEAR_FAULT` then `RUN` rather
+  than sending both at once - which is the handshake wanted anyway, since
+  FAULTED re-runs CHECK on the way out.
+
+A command nobody acted on is not an error to swallow: `flush_all()` is where it
+gets rejected, so a host is told rather than left waiting. **TODO - not built.**
 
 An earlier serial-only implementation was removed in `efaf6bb`. `git show
-efaf6bb^:Inc/app/command.h` has the grammar it spoke, and the host tools in
-`tools/` still speak it.
+efaf6bb^:Inc/app/command.h` has the grammar it spoke.
 
 ### Modes
 
@@ -215,51 +259,74 @@ pass, and never learns which mode is running. Adding a mode touches
 `Src/app/modes/`, not the system state machine.
 
 ```c
-bool         mode_begin(mode_t mode);   /* false = refused, nothing started */
-mode_state_t mode_service(void);        /* INIT / RUNNING / FAULTED / EXIT   */
-void         mode_stop(void);           /* the one teardown, every exit path */
+mode_init_result_t mode_begin(mode_t mode);        /* REFUSED / FAULT / OK */
+mode_state_t       mode_service(bool stop_request); /* INIT / RUNNING / FAULTED / EXIT */
 ```
 
-Three invariants, and they are why this is a module rather than a `switch` in
+There is no public teardown. A thing nobody outside can call is harder to
+forget than a thing everybody must remember, so `mode.c` tears down internally
+on every exit path and `app.c` never does it.
+
+`stop_request` is an **edge** - `flush_all()` clears the STOP command at the
+bottom of the pass it arrived in - so `mode.c` latches it and hands the mode
+below a **level** that stays true until it exits. An individual mode therefore
+has nothing to latch and cannot drop a stop by missing a pass. Stopping is
+allowed to take several passes; a ramp down to zero duty is the reason for
+asking rather than telling.
+
+Four invariants, and they are why this is a module rather than a `switch` in
 `app.c`:
 
 - **The running mode is the sole owner of all five channels while `ACTIVE`.**
   Nothing outside it may command a channel — not the command layer, not MPPT
   reaching in sideways. Requests arrive; the mode decides what to do with them.
   To know what any channel is being asked to do, read one mode's code.
-- **One teardown.** Finish, fault or stop all end through `mode_stop()`, so the
-  path that leaves channels switching cannot be forgotten in a mode added
-  later.
-- **The mode is latched at `mode_begin()`.** A later write to `sys.mode` cannot
-  swap regulators underneath a live channel; it is picked up at the next start.
+- **One teardown, and it is internal.** `MODE_STATE_EXIT` and
+  `MODE_STATE_FAULTED` both mean the channels are already stopped and the
+  internal state already reset. `app.c` tears nothing down; the `pwm_stop_all()`
+  on entry to STANDBY and FAULTED is a backstop against a buggy mode, not the
+  mechanism.
+- **`mode_begin()` initialises fully and cleans up after itself.** It never
+  assumes a clean slate - a previous run may have left an integrator wound up -
+  and never returns FAULT or REFUSED with a channel still switching. Between
+  that and the `pwm_stop_all()` backstop, a mode that forgets its own cleanup is
+  still safe *and* still starts correctly next time.
+- **The mode is latched at `mode_begin()`.** `mode.c` holds it rather than
+  re-reading `sys.mode` each pass, so a later write cannot swap regulators
+  underneath a live channel; it is picked up at the next start.
 
-`mode_begin()` returns `bool` because a run command must be refusable — wrong
-channel state, bus absent, a fault latched — and refusal has to be synchronous
-so a transport can answer its host immediately.
+`mode_begin()` is refusable — wrong channel state, bus absent, a fault latched —
+and refusal is synchronous so a transport can answer its host immediately.
 
-A `switch` inside `mode.c` is right at three modes. Around six, when the same
-switch appears in `begin`, `service` and `stop`, it becomes a `static const`
-table of `{begin, service, stop}` and each new mode is one row. Do not start
-there.
+A `switch` inside `mode.c` is right at three modes. Around six it becomes a
+`static const` table of `{begin, service}` and each new mode is one row. Do not
+start there. Neither switch carries a `default:`, so adding a `mode_t` fails to
+build until it is wired into both.
 
 ## Roadmap
 
 Rough order, not a commitment. Steps 2–4 give a working, tunable converter with
 no MPPT in it; step 5 is then small.
 
-1. **Commands in, and the mode they select.** Nothing can leave STANDBY until
-   this exists, so it gates everything below it.
-2. **The duty gate.** Slew limit and dynamic ceiling, in one place. Verifiable
-   on a scope with no panel connected.
-3. **`STARTING` ramp.** 0 % to ideal-diode conduction, reliably. The hardest
-   bench milestone, and it needs no regulator at all.
-4. **CV loop.** Single channel into an electronic load. This is where control
-   algorithms actually get written and tuned.
-5. **MPPT.** P&O on the Vin setpoint, on top of the same slot. Kept a pure
-   function of measurements → setpoint, so it is swappable and testable on the
-   host.
-6. **Inductor current sensing.** Removed along with `iind.c`; needs the ADC2 /
-   ADC3 CubeMX work listed in [hardware.md](hardware.md).
+1. **Commands in, and the mode they select.** *Consumer side done; no transport
+   or decoder yet, so a stub stands in for a host.*
+2. **The duty gate.** Slew limit and dynamic ceiling, in one place. *A slew
+   limit exists inside `mode_single_ch_cv.c` and has been proven on the bench;
+   it moves to `app/control` once a second mode needs it.*
+3. **`STARTING` ramp.** 0 % to ideal-diode conduction, reliably. Needs no
+   regulator at all. *Not started - the bench uses a resistive load, where the
+   ideal diode conducts from the outset and the problem does not appear.*
+4. **CV loop.** Single channel into a load. *Running: PI with measured `dt`,
+   conditional-integration anti-windup, and a slew limit. ~200 ms settling into
+   a resistive load at 12 V in / 25 V out.*
+5. **Inductor current sensing.** ADC2 / ADC3 CubeMX work is fully specified in
+   [hardware.md](hardware.md). **Moved ahead of MPPT:** it is the foundation for
+   a current limit that transfers from bench to array, and it makes both the CV
+   and MPPT inner loops easier rather than harder.
+6. **MPPT.** P&O on the Vin setpoint. Kept a pure function of measurements →
+   setpoint, so it is swappable and testable on the host. Regulating Vin is the
+   *easier* of the two loops - the right-half-plane zero lives in the
+   duty-to-output path, not duty-to-input.
 7. **Temperature.** Nothing consumes it until the divider is understood — see
    [hardware.md](hardware.md).
 8. **FDCAN.** Telemetry broadcast to the car computer on FDCAN1.
@@ -280,6 +347,15 @@ Board questions live in [hardware.md](hardware.md). These are the control ones.
    which is not designed.
 3. **What happens in a run state when the bus disappears?** Back to STANDBY, or
    a fault?
+6. **Where does the slew limit's number come from?** It is currently one
+   constant in duty units per step, tuned on the bench. `dI/dt` for a given
+   duty step scales with `Vout / L`, and the OCP headroom on the real array is
+   about a third of the bench's - so the constant does not transfer. Scale it by
+   operating point, or measure current and limit that instead.
+7. **Should the control step be timer-driven or event-driven?** Running it when
+   a fresh measurement lands, rather than on a fixed period, removes the beat
+   between the ADC and control timers and makes `dt` exactly the sampling
+   interval. Matters more for MPPT, where the measurement is the slower INA228.
 4. **Does losing the CAN link in a run state mean anything?** Keep generating,
    or fall back to STANDBY.
 5. **When a channel faults in a run state, does it get retried?** Never, a

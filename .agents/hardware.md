@@ -198,6 +198,39 @@ produce a steady-state overload, so *every* OCP trip observed is a transient or
 a reverse-current event, not an overload — which is why a ramp rate parameter
 exists at all. It limits `dI/dt` during duty steps, not steady current.
 
+**That argument is about the array, and stops holding on a bench supply.** A
+supply is a stiff voltage source and will deliver its full current limit into
+whatever appears, so an OCP trip on the bench is not automatically a transient.
+
+#### Measured 2026-08-23: a duty step trips OCP, and OVP never gets a look in
+
+Every turn-on failure was OCP, within microseconds of a duty step — the 55 V
+overvoltage threshold was never approached. **The slew limit, not the ceiling,
+is the load-bearing half of the duty gate.**
+
+Bracket, at **12 V in, 25 V out, light resistive load** (bench supply, roughly
+2 A input, so ~10 A of headroom to the trip):
+
+| Single-step duty change | Result |
+|---|---|
+| ~150 units (15.0 %) | clean |
+| ~218 units (21.8 %) | trips OCP |
+
+**This number does not transfer to the array.** Two things move against it:
+
+- **Headroom.** The large array at Impp sits at 8.63 A peak with ripple —
+  3.4 A to the trip, against ~10 A on the bench.
+- **Voltage.** A duty step drives inductor current at `dI/dt ≈ ΔD × Vout / L`.
+  The real bus runs 32.5–54.6 V against the bench's 25 V, so up to 2.2× the
+  slope for the same step.
+
+Stacked, a bench-tuned constant is roughly **6× too permissive** in the field.
+Either scale the limit by operating point, or measure current and limit that —
+see [thesis_discussion_points.md](thesis_discussion_points.md).
+
+Note the bench supply at 12 V is close to the **small** array's Vmpp
+(12.11 V), so it is representative of that case and of nothing else.
+
 ### Overvoltage (OVP) — global, software latched
 
 A comparator asserts when the bus exceeds **55 V**, wired to **PC10 /

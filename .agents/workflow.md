@@ -74,10 +74,26 @@ The loop:
    switching behaviour.
 4. Record anything learned about the board in [hardware.md](hardware.md).
 
-> **TODO — the host link is gone, so step 2 is currently LEDs and a debugger.**
-> The serial command/telemetry module was removed in `efaf6bb`. Until it comes
-> back there is no `#cfg`, no telemetry CSV, and the tools below cannot talk to
-> the board.
+> **The board still has no command link.** The serial command/telemetry module
+> was removed in `efaf6bb` and nothing has replaced it, so the board cannot be
+> told anything - a stub in `command.c` asks for CV a second after boot. What
+> exists instead is one-way instrumentation, below.
+
+### Bench instrumentation — `dev_reporter`
+
+`Inc/dev/dev_reporter.h` is a development-only print-out over UART5, deliberately
+outside the architecture in [project_plan.md](project_plan.md). Nothing in the
+firmware calls it and deleting it breaks nothing. **Do not build on it** - the
+real host link is the command and telemetry path, and this is not a step
+towards it.
+
+Two ways to use it, for different jobs:
+
+- `dev_record()` / `dev_flush()` — store to RAM during a run, send it all at the
+  end. Cheap enough for a control loop. Use this for anything timed.
+- `dev_printf()` / `dev_print_*()` — format and send immediately. **Blocks**;
+  at 115200 a 35-character line stalls the main loop for 3 ms. One-off markers
+  only.
 
 ### Host tools
 
@@ -86,21 +102,24 @@ PEP 723 inline dependency metadata, so `uv run` is the whole setup — no venv,
 no `requirements.txt`, no `pyproject.toml`.
 
 ```
-uv run tools/telem_gui.py          # web GUI: live plots + PWM control
-uv run tools/stream_telem.py       # terminal CSV stream, quick sanity check
-uv run tools/telem_gui.py --list   # show candidate serial ports
+uv run tools/bench_run.py          # build, flash, capture, write serial_flush.svg
+uv run tools/dev_monitor.py        # just watch the UART
+uv run tools/dev_monitor.py --plot # capture and plot, then exit
+uv run tools/dev_monitor.py --list # show candidate serial ports
 uv run tools/gen_ntc_table.py      # regenerate an NTC lookup table
 ```
 
-`telem_gui.py` is the primary bench tool: it plots any selection of telemetry
-series over a chosen span, shows every field as a live number in the readout
-grid below, and sends commands back over the same link. Readout boxes double as
-the series toggles. It drives a live power stage — nothing is energised until
-Start is pressed, but the duty slider applies as it moves, on a running channel
-included.
+`bench_run.py` is the bench loop in one command — it runs the same CMake preset
+Ctrl+Shift+B does, flashes with `-rst`, then hands over to `dev_monitor.py`.
 
-These scripts are the living record of the wire format the firmware used to
-speak, and are the reference for rebuilding it.
+`dev_monitor.py` prints lines and parses nothing beyond `name=value`. `--plot`
+arms on the first data line, ends when the stream goes quiet, writes
+`serial_flush.svg` in the repo root and exits — so a buffered `dev_flush()`
+burst needs no duration guessed in advance. `-t` is only a safety timeout.
+
+`telem_gui.py` and `stream_telem.py` were deleted: they spoke the removed
+protocol. `git show efaf6bb^:Inc/app/command.h` is the record of that wire
+format.
 
 ### Serial protocol — TODO, not implemented
 
@@ -165,6 +184,13 @@ void led_init(void) {
 }
 ```
 
+### Indentation
+
+**Two spaces, no tabs.** `.vscode/settings.json` sets this workspace-wide with
+`editor.detectIndentation` off — left on, VS Code infers the width from each
+file's contents and silently overrides it. `tools/` is exempt back to 4, being
+PEP 8.
+
 ### Naming and structure
 
 - `snake_case` throughout. **Short module prefix on every public symbol**
@@ -207,13 +233,16 @@ HAL call.
 
 ### Comments
 
-The distinctive thing about this codebase, and worth preserving: **comments
-explain why, and quantify.** They carry the arithmetic that justifies a number,
-the failure mode a guard exists to prevent, and the constraint a caller must
-respect. `Inc/drivers/led.h` and `Inc/drivers/channel_telem.h` are the
-standard.
+**Keep them short.** The code is self-documenting and the author reads code
+well — a single line or two is usually plenty. Use `//`; reach for `/* */` only
+when a comment genuinely runs long. This is an Agent Instruction in
+[project_plan.md](project_plan.md), not a preference.
 
-Do not write comments that restate the code. Do not strip the existing ones.
+Spend that space on what the code cannot say: the arithmetic behind a number,
+the failure a guard prevents, the constraint a caller must respect, what breaks
+if two calls are reordered. Restating the statement below it is noise.
+
+Do not strip the existing ones.
 
 ### Non-blocking
 
