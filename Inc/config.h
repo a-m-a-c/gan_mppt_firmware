@@ -34,6 +34,6 @@
 #define TELEM_STEP_TIMEOUT_MS 5U
 
 /* Analog Telemetry Parameters */
-#define ANALOG_PERIOD_MS 10U
+#define ANALOG_PERIOD_MS 1U
 
 #endif /* CONFIG_H */

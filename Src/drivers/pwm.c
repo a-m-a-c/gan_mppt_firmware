@@ -359,7 +359,7 @@ bool pwm_start(uint32_t channel) {
     exit_critical(primask);
     return false;
   }
-
+  pwm_set_duty_cycle(channel, PWM_DEFAULT_DUTY_CYCLE);
   /* Transfer preloaded values, start the counter, enable the outputs. */
   SET_BIT(hhrtim.Instance->sCommonRegs.CR2, hw->timer_update);
   SET_BIT(hhrtim.Instance->sMasterRegs.MCR, hw->timer_id);

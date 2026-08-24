@@ -74,26 +74,10 @@ The loop:
    switching behaviour.
 4. Record anything learned about the board in [hardware.md](hardware.md).
 
-> **The board still has no command link.** The serial command/telemetry module
-> was removed in `efaf6bb` and nothing has replaced it, so the board cannot be
-> told anything - a stub in `command.c` asks for CV a second after boot. What
-> exists instead is one-way instrumentation, below.
-
-### Bench instrumentation — `dev_reporter`
-
-`Inc/dev/dev_reporter.h` is a development-only print-out over UART5, deliberately
-outside the architecture in [project_plan.md](project_plan.md). Nothing in the
-firmware calls it and deleting it breaks nothing. **Do not build on it** - the
-real host link is the command and telemetry path, and this is not a step
-towards it.
-
-Two ways to use it, for different jobs:
-
-- `dev_record()` / `dev_flush()` — store to RAM during a run, send it all at the
-  end. Cheap enough for a control loop. Use this for anything timed.
-- `dev_printf()` / `dev_print_*()` — format and send immediately. **Blocks**;
-  at 115200 a 35-character line stalls the main loop for 3 ms. One-off markers
-  only.
+> **The board has no instrumentation output.** `dev_reporter` was removed on
+> 2026-08-24 - it existed only to plot the CV loop on the bench, and cost 74 KB
+> of DTCMRAM for its sample buffer. The serial command path replaces it: reads
+> and telemetry go over the real link rather than a parallel debug one.
 
 ### Host tools
 
@@ -102,24 +86,37 @@ PEP 723 inline dependency metadata, so `uv run` is the whole setup — no venv,
 no `requirements.txt`, no `pyproject.toml`.
 
 ```
-uv run tools/bench_run.py          # build, flash, capture, write serial_flush.svg
-uv run tools/dev_monitor.py        # just watch the UART
-uv run tools/dev_monitor.py --plot # capture and plot, then exit
-uv run tools/dev_monitor.py --list # show candidate serial ports
+uv run tools/console.py            # send commands, watch telemetry
+uv run tools/console.py --list     # show candidate serial ports
+uv run tools/console.py --watch    # start with telemetry printing on
+uv run tools/plotter.py --mode cv --start 2 --end 5 --length 8
 uv run tools/gen_ntc_table.py      # regenerate an NTC lookup table
 ```
 
-`bench_run.py` is the bench loop in one command — it runs the same CMake preset
-Ctrl+Shift+B does, flashes with `-rst`, then hands over to `dev_monitor.py`.
+`plotter.py` is the scripted bench run: it captures for `--length` seconds,
+sends the mode command at `--start` and STOP at `--end`, then writes
+`stream_plot.csv` and `stream_plot.svg` to the repo root with the command
+instants marked. It imports its protocol definitions from `console.py` rather
+than repeating them, so there is one place to fix when the firmware changes.
+Both output files are gitignored.
 
-`dev_monitor.py` prints lines and parses nothing beyond `name=value`. `--plot`
-arms on the first data line, ends when the stream goes quiet, writes
-`serial_flush.svg` in the repo root and exits — so a buffered `dev_flush()`
-burst needs no duration guessed in advance. `-t` is only a safety timeout.
+`console.py` is the host side of the serial link. It encodes the outgoing
+`[op][size][data][crc]` frames and decodes the incoming `[id][size][data]`
+stream - **the two directions do not share a format**, and both sets of
+constants are copied from the firmware with the file they came from named
+next to them.
 
-`telem_gui.py` and `stream_telem.py` were deleted: they spoke the removed
-protocol. `git show efaf6bb^:Inc/app/command.h` is the record of that wire
-format.
+Its stream parser resyncs by validating each id against its expected width,
+because connecting mid-stream is the normal case. It also refuses to send a
+payload over 8 bytes, since `serial.c` latches on one and that costs a power
+cycle.
+
+`gen_ntc_table.py` is the only host tool. Everything that talked to the board
+has been deleted: `bench_run.py` and `dev_monitor.py` with `dev_reporter` on
+2026-08-24, and `telem_gui.py` / `stream_telem.py` earlier - they spoke the
+protocol removed in `efaf6bb`. `git show efaf6bb^:Inc/app/command.h` is the
+record of that wire format.
+
 
 ### Serial protocol — TODO, not implemented
 
@@ -141,15 +138,24 @@ different number hides the difference between "applied" and "nearly applied".
 The driver's own clamps are the backstop for internal callers.
 
 When this is rebuilt it is **transport-agnostic** — FDCAN carries the same
-message set — see [project_plan.md](project_plan.md).
+message set — see [README.md](README.md#commands). Task 015 in [todo.md](todo.md).
 
 ---
 
 ## Code layout
 
-The directory split and what belongs in each part is in
-[project_plan.md](project_plan.md#firmware-architecture). The rules for adding
-to it are here.
+```
+Inc/config.h                      every tunable number, no includes/types/logic
+Inc/drivers/      Src/drivers/    hardware-facing modules
+Inc/app/          Src/app/        control and high-level logic
+Inc/app/modes/    Src/app/modes/  one file per run mode
+Inc/app/control/  Src/app/control/  PI, P&O, the duty gate
+```
+
+Tunable numbers live in `Inc/config.h`; anything that follows from the hardware
+and can never change is hardcoded next to the code that uses it. How the
+modules fit together is in [README.md](README.md#firmware-architecture). The
+rules for adding to it are here.
 
 Generated CubeMX code is a thin init layer. Everything the project actually
 does hangs off `app_setup()` and `app_loop()` in `Src/app/app.c`.
@@ -215,6 +221,25 @@ project, so all interrupt entry points are visible in one place and modules
 never collide over the shared callback symbols. Callbacks contain **routing
 only** — the logic lives in a function in the owning module.
 
+#### Priority allocation
+
+`HAL_Init()` sets `NVIC_PRIORITYGROUP_4`: **4 pre-emption bits, 0 subpriority
+bits.** Subpriority is therefore always `0U` and has no effect - passing
+anything else is silently masked. Lower number = higher priority.
+
+| Vector | Prio | Enabled in | Why |
+|---|---|---|---|
+| `EXTI15_10` (OVP) | 0 | `gpio.c`, CubeMX | Safety. Must never be delayed. |
+| `HRTIM1_FLT` (OCP, FLT1-5) | 0 | `hrtim.c`, CubeMX | Safety. Must never be delayed. |
+| `UART5` (serial commands) | 4 | `serial.c`, `serial_init()` | A byte is 10.9 us at 921600. Later than that is an overrun and the byte is gone for good. |
+| `I2C1_EV` / `I2C1_ER` (telemetry) | 5 | `channel_telem.c`, `telem_start_sweeps()` | The MCU is the master, so a late ISR only stretches the clock. Nothing is lost. |
+
+Serial sits **above** telemetry because it is the only one of the two where
+being late destroys data. Nothing sits at or above the fault vectors.
+
+A driver enables its own NVIC line in its own init, so the priority and the
+reason for it live next to the code that depends on them.
+
 ### HAL vs registers
 
 **Use the HAL by default.** Drop to `SET_BIT`/`CLEAR_BIT` only where genuinely
@@ -236,7 +261,7 @@ HAL call.
 **Keep them short.** The code is self-documenting and the author reads code
 well — a single line or two is usually plenty. Use `//`; reach for `/* */` only
 when a comment genuinely runs long. This is an Agent Instruction in
-[project_plan.md](project_plan.md), not a preference.
+[project_agent_instructions.md](project_agent_instructions.md), not a preference.
 
 Spend that space on what the code cannot say: the arithmetic behind a number,
 the failure a guard prevents, the constraint a caller must respect, what breaks
@@ -248,7 +273,7 @@ Do not strip the existing ones.
 
 `app_loop()` must not block, and anything added to it follows the same rule.
 Why, and what that costs each service, is in
-[project_plan.md](project_plan.md#the-loop).
+[README.md](README.md#the-loop).
 
 ### Safety
 

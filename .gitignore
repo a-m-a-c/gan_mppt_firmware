@@ -44,3 +44,7 @@ desktop.ini
 *~
 *.swp
 *.swo
+
+# Bench capture output (tools/plotter.py)
+stream_plot.csv
+stream_plot.svg

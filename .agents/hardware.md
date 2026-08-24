@@ -151,7 +151,7 @@ D_max = 1 - Vin / Vbus + margin
 with Vin from the channel's input INA228 and Vbus from the bus ADC. This is
 what stops a duty being commanded that has no valid operating point on the
 array currently connected. Margin is TBD. See the duty gate in
-[project_plan.md](project_plan.md) for where it goes.
+[README.md](README.md) for where it goes.
 
 ### Frequency / duty / dead-time interaction
 
@@ -215,6 +215,13 @@ Bracket, at **12 V in, 25 V out, light resistive load** (bench supply, roughly
 |---|---|
 | ~150 units (15.0 %) | clean |
 | ~218 units (21.8 %) | trips OCP |
+
+Both figures were taken at a **10 ms** control step, so the clean rate is
+15000 duty/s. `DUTY_SLEW_PER_STEP` in `mode_single_ch_cv.c` is expressed per
+step, not per second, so it has to be rescaled whenever `SAMPLE_TIME_MS`
+changes. It went to 15/step on 2026-08-24 when the loop moved to 1 ms, which
+is the same 15000 duty/s. The per-second rate is the measured quantity; the
+per-step constant is derived from it.
 
 **This number does not transfer to the array.** Two things move against it:
 

@@ -58,15 +58,14 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Src/app/status.c
     Src/app/modes/mode.c
     Src/app/command.c
+    Src/app/stream.c
     Src/app/modes/mode_mppt.c
     Src/app/modes/mode_single_ch_mppt.c
     Src/app/modes/mode_single_ch_cv.c
-    # Development only - see Inc/dev/dev_reporter.h. Not part of the firmware
-    # architecture; safe to drop this line and the Inc/dev path together.
+    Src/drivers/serial.c
     Src/app/control/control.c
     Src/app/control/pi.c
     Src/app/control/perturb_observe.c
-    Src/dev/dev_reporter.c
 )
 
 # Add include paths
@@ -76,7 +75,6 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     Inc/app
     Inc/app/modes
     Inc/app/control
-    Inc/dev
 )
 
 # Add project symbols (macros)

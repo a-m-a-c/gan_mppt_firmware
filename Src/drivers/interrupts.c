@@ -3,7 +3,8 @@
 #include "i2c.h"
 #include "main.h"
 #include "pwm.h"
-
+#include "usart.h"
+#include "serial.h"
 /* All callbacks here run in ISR context. Routing only - no logic. */
 
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
@@ -74,5 +75,21 @@ void HAL_I2C_ErrorCallback(I2C_HandleTypeDef *hi2c)
   if (hi2c->Instance == I2C1)
   {
     telem_i2c_error();
+  }
+}
+
+void UART5_IRQHandler(void) {
+  HAL_UART_IRQHandler(&huart5);
+}
+
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
+  if (huart->Instance == UART5) {
+    serial_rx_complete();
+  }
+}
+
+void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart) {
+  if (huart->Instance == UART5) {
+    serial_rx_error();
   }
 }

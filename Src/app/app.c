@@ -16,6 +16,8 @@
 #include "channel_telem.h"
 #include "mode.h"
 #include "command.h"
+#include "stream.h"
+#include "serial.h"
 
 volatile bool error_flag = false; // Global error flag, set to true when something I did not expect occurs.
 
@@ -35,13 +37,17 @@ void app_setup(void) {
   pwm_init(CHANNEL_C);
   pwm_init(CHANNEL_D);
   pwm_init(CHANNEL_E);
+  serial_init();
+  command_init();
+  stream_init();
 }
 
 static system_state_t prev_state = SYSTEM_STATE_INIT;
 
 void app_loop(void) {
   /* Always on Services*/
-  system_command_service(); // Get fresh commands.
+  serial_service(); // Check for new serial commands.
+  command_service(); // Collect commands.
   if (system_command_received(SYSTEM_COMMAND_RESET)) sys.state = SYSTEM_STATE_RESET; // Check for reset
 
   const bool entered = (sys.state != prev_state); // Check for state transition
@@ -152,18 +158,12 @@ void app_loop(void) {
       error_flag = true; // Should never get here, but if we do, set the error flag.
       break;
     }
-
-    /* ------------------------------- DEFAULT -------------------------------*/
-    default: {
-      error_flag = true;
-      sys.state = SYSTEM_STATE_FAULTED;
-      break;
-    }
   }
 
   /* Always on Services*/
   analog_service();
   status_service();
+  stream_service();
   telem_service();
-  system_command_flush_all(); // Flush commands.
+  command_flush_all(); // Flush commands.
 }
