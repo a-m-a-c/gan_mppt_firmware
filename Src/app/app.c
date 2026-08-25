@@ -99,7 +99,7 @@ void app_loop(void) {
     case SYSTEM_STATE_ACTIVE: {
       /* ENTRY BEHAVIOUR */
       if (entered) {
-        mode_init_result_t init_result = mode_begin(sys.mode);
+        mode_request_result_t init_result = mode_begin(sys.mode);
         switch (init_result) {
           case MODE_INIT_FAULT:
             sys.mode = MODE_NONE;
@@ -120,8 +120,6 @@ void app_loop(void) {
       mode_state_t state = mode_service(stop_request);
 
       switch (state) {
-        case MODE_STATE_INIT:
-          break;
         case MODE_STATE_RUNNING:
           break;
         case MODE_STATE_FAULTED:

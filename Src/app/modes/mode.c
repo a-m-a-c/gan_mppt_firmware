@@ -22,7 +22,7 @@ static bool stopping = false;
      a transport can answer its host without waiting for a later pass.
    - Clean up after itself. Never return MODE_INIT_FAULT or MODE_INIT_REFUSED
      with a channel still switching - app.c does no teardown on those paths. */
-mode_init_result_t mode_begin(mode_t mode) {
+mode_request_result_t mode_begin(mode_t mode) {
   active_mode = mode;
   stopping = false;
 

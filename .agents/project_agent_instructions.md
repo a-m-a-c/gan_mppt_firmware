@@ -8,9 +8,10 @@ outstanding. Everything in `.agents/` exists to carry what those two cannot say
 about themselves. Where a doc disagrees with the code, the code wins and the
 doc gets fixed.
 
-Board facts are in [hardware.md](hardware.md). Architecture and the file index
-are in [README.md](README.md). Build, flash, test and style are in
-[workflow.md](workflow.md).
+Board facts are in [hardware.md](hardware.md). The file index is in
+[README.md](README.md). Build, flash, test and style are in
+[workflow.md](workflow.md). **Architecture is not written down anywhere — read
+it from the code.**
 
 ## Introduction (DO NOT EDIT)
 This is the firmware for a GaN MPPT device with 5 seperate channels. I am writing this document because I feel like I do not understand the way the firmware is going, nor do you understand what I want this to be.
@@ -50,7 +51,7 @@ Agreed 2026-08-15, extended 2026-08-24. The sections above are unchanged.
   - board facts -> [hardware.md](hardware.md)
   - outstanding work -> [todo.md](todo.md), never here
   - build, style, conventions -> [workflow.md](workflow.md)
-  - architecture and open questions -> [README.md](README.md)
+  - how the modules fit together -> nowhere; it is read from the code
   - a critical revelation -> [thesis_discussion_points.md](thesis_discussion_points.md)
 
   Nothing project-specific goes into a model's private memory.

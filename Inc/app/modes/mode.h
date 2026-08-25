@@ -1,5 +1,5 @@
-#ifndef MODE_MANAGER_H
-#define MODE_MANAGER_H
+#ifndef MODE_H
+#define MODE_H
 #include <stdbool.h>
 
 typedef enum {
@@ -10,7 +10,6 @@ typedef enum {
 } mode_t;
 
 typedef enum {
-  MODE_STATE_INIT,
   MODE_STATE_RUNNING,
   MODE_STATE_FAULTED,
   MODE_STATE_EXIT
@@ -20,9 +19,9 @@ typedef enum {
     MODE_INIT_REFUSED,
     MODE_INIT_FAULT,
     MODE_INIT_OK
-} mode_init_result_t;
+} mode_request_result_t;
 
-mode_init_result_t mode_begin(mode_t mode);
+mode_request_result_t mode_begin(mode_t mode);
 mode_state_t mode_service(bool stop_request);
 
-#endif /* MODE_MANAGER_H */
+#endif /* MODE_H */

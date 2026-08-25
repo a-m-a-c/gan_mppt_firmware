@@ -150,8 +150,8 @@ D_max = 1 - Vin / Vbus + margin
 
 with Vin from the channel's input INA228 and Vbus from the bus ADC. This is
 what stops a duty being commanded that has no valid operating point on the
-array currently connected. Margin is TBD. See the duty gate in
-[README.md](README.md) for where it goes.
+array currently connected. Margin is TBD. It belongs in the duty gate
+(`Src/app/control/control.c`); task 006 in [todo.md](todo.md).
 
 ### Frequency / duty / dead-time interaction
 

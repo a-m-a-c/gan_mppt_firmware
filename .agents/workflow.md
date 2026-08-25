@@ -138,7 +138,7 @@ different number hides the difference between "applied" and "nearly applied".
 The driver's own clamps are the backstop for internal callers.
 
 When this is rebuilt it is **transport-agnostic** — FDCAN carries the same
-message set — see [README.md](README.md#commands). Task 015 in [todo.md](todo.md).
+message set. Task 015 in [todo.md](todo.md).
 
 ---
 
@@ -154,8 +154,8 @@ Inc/app/control/  Src/app/control/  PI, P&O, the duty gate
 
 Tunable numbers live in `Inc/config.h`; anything that follows from the hardware
 and can never change is hardcoded next to the code that uses it. How the
-modules fit together is in [README.md](README.md#firmware-architecture). The
-rules for adding to it are here.
+modules fit together is read from the code; the rules for adding to it are
+here.
 
 Generated CubeMX code is a thin init layer. Everything the project actually
 does hangs off `app_setup()` and `app_loop()` in `Src/app/app.c`.
@@ -272,8 +272,10 @@ Do not strip the existing ones.
 ### Non-blocking
 
 `app_loop()` must not block, and anything added to it follows the same rule.
-Why, and what that costs each service, is in
-[README.md](README.md#the-loop).
+Every service is written to be called often and return immediately — I2C
+transfers are sequenced across passes, ADC conversions are sub-microsecond
+one-shots. Nothing bounds the loop period, so no design may depend on a maximum
+pass duration.
 
 ### Safety
 

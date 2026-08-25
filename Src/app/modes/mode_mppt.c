@@ -1,6 +1,6 @@
 #include "mode_mppt.h"
 
-mode_init_result_t mode_mppt_begin(void) {
+mode_request_result_t mode_mppt_begin(void) {
   // STUB
   return MODE_INIT_OK; // Replace with appropriate return value
 }
