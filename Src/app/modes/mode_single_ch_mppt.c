@@ -1,7 +1,7 @@
 #include "mode_single_ch_mppt.h"
 
 mode_request_result_t mode_single_ch_mppt_begin(void) {
-  // STUB
+  // Init 
   return MODE_INIT_OK;
 }
 

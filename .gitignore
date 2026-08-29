@@ -48,3 +48,4 @@ desktop.ini
 # Bench capture output (tools/plotter.py)
 stream_plot.csv
 stream_plot.svg
+stream_iv.svg

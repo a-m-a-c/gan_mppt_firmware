@@ -3,10 +3,16 @@
 #include "channel.h"
 #include "system.h"
 #include "config.h"
-
+#include "main.h"
+#include <stdint.h>
+#define BLINK_DELAY_MS 200
+static uint32_t last_blink_time_ms = 0;
+static bool channel_led_state[5] = {false, false, false, false, false};
+static uint8_t cur_led = 0;
 void status_service(void) {
-  led_set_err(sys.state == SYSTEM_STATE_FAULTED);
-  led_set_active(sys.state == SYSTEM_STATE_ACTIVE);
+  system_state_t state = sys.state;
+  led_set_err(state == SYSTEM_STATE_FAULTED);
+  led_set_active(state == SYSTEM_STATE_ACTIVE);
 
   /* Between the thresholds neither branch runs, so the LED holds its state. */
   if (sys.vbus_mv > LED_BUS_ON_MV) {
@@ -15,11 +21,34 @@ void status_service(void) {
     led_set_out_conn(false);
   }
 
-  led_set_channel_a(channel_a.pwm.op_state == PWM_STATE_RUNNING);
-  led_set_channel_b(channel_b.pwm.op_state == PWM_STATE_RUNNING);
-  led_set_channel_c(channel_c.pwm.op_state == PWM_STATE_RUNNING);
-  led_set_channel_d(channel_d.pwm.op_state == PWM_STATE_RUNNING);
-  led_set_channel_e(channel_e.pwm.op_state == PWM_STATE_RUNNING);
-
-
+  if (state != SYSTEM_STATE_ACTIVE) {
+    uint32_t current_time_ms = HAL_GetTick();
+    if (current_time_ms - last_blink_time_ms >= BLINK_DELAY_MS) {
+      last_blink_time_ms = current_time_ms;
+      // Increment the led sequence, every blink_delay_ms, the next led will turn on, at the end, all off.
+      // Do not switch previous LED off.
+      // Should turn on one by one until all on and then turn all off and repeat.
+      if (cur_led < 5) {
+        channel_led_state[cur_led] = true;
+        cur_led++;
+      } else {
+        for (int i = 0; i < 5; i++) {
+          channel_led_state[i] = false;
+        }
+        cur_led = 0;
+      }
+      led_set_channel_a(channel_led_state[0]);
+      led_set_channel_b(channel_led_state[1]);
+      led_set_channel_c(channel_led_state[2]);
+      led_set_channel_d(channel_led_state[3]);
+      led_set_channel_e(channel_led_state[4]);
+    }
+  } else {
+    // If the system is active, set the channel LEDs based on their PWM state.
+    led_set_channel_a(channel_a.pwm.op_state == PWM_STATE_RUNNING);
+    led_set_channel_b(channel_b.pwm.op_state == PWM_STATE_RUNNING);
+    led_set_channel_c(channel_c.pwm.op_state == PWM_STATE_RUNNING);
+    led_set_channel_d(channel_d.pwm.op_state == PWM_STATE_RUNNING);
+    led_set_channel_e(channel_e.pwm.op_state == PWM_STATE_RUNNING);
+  }
 }

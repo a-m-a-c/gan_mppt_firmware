@@ -62,6 +62,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Src/app/modes/mode_mppt.c
     Src/app/modes/mode_single_ch_mppt.c
     Src/app/modes/mode_single_ch_cv.c
+    Src/app/modes/mode_single_ch_iv_sweep.c
     Src/drivers/serial.c
     Src/app/control/control.c
     Src/app/control/pi.c

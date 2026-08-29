@@ -6,7 +6,7 @@
 #include "main.h"
 #include "serial.h"
 
-#define NUM_COMMAND_SLOTS 7 // Number of slots in system_commands_t
+#define NUM_COMMAND_SLOTS 8 // Number of slots in system_commands_t
 
 typedef enum {
   OP_SYSTEM_COMMAND_NONE = 0x00,
@@ -15,7 +15,8 @@ typedef enum {
   OP_SYSTEM_COMMAND_STOP = 0x03,
   OP_SYSTEM_COMMAND_RUN_MPPT = 0x04,
   OP_SYSTEM_COMMAND_RUN_SINGLE_CH_CV = 0x05,
-  OP_SYSTEM_COMMAND_RUN_SINGLE_CH_MPPT = 0x06
+  OP_SYSTEM_COMMAND_RUN_SINGLE_CH_MPPT = 0x06,
+  OP_SYSTEM_COMMAND_RUN_SINGLE_CH_IV_SWEEP = 0x07
 } serial_opcode_t;
 
 static mode_t pending_mode;
@@ -45,6 +46,10 @@ static void accept_serial_command(transport_frame_t *frame) {
     case OP_SYSTEM_COMMAND_RUN_SINGLE_CH_MPPT:
       system_command_received_register[SYSTEM_COMMAND_RUN_SINGLE_CH_MPPT] = true;
       pending_mode = MODE_SINGLE_CH_MPPT;
+      break;
+    case OP_SYSTEM_COMMAND_RUN_SINGLE_CH_IV_SWEEP:
+      system_command_received_register[SYSTEM_COMMAND_RUN_SINGLE_CH_IV_SWEEP] = true;
+      pending_mode = MODE_SINGLE_CH_IV_SWEEP;
       break;
     default:
       // Unknown command, ignore

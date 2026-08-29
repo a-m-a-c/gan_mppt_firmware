@@ -43,6 +43,7 @@ OPCODES = {
     "mppt": 0x04,
     "cv": 0x05,
     "chmppt": 0x06,
+    "ivsweep": 0x07,
 }
 
 # serial.c latches SERIAL_STATE_ERROR on size > TRANSPORT_MAX_PAYLOAD, which
@@ -61,11 +62,20 @@ CRC_STUB = 0xCC
 # values, so it is the floor for `rate`.
 STREAM_PERIOD_MS = 1
 
+# id -> (name, width, signed). Width doubles as the resync check, so it has to
+# match the firmware exactly.
 STREAM = {
-    0x60: ("vbus_mv", 4),
-    0x61: ("duty", 2),
-    0x62: ("flags", 1),
+    0x60: ("vbus_mv", 4, False),
+    0x61: ("duty", 2, False),
+    0x62: ("flags", 1, False),
+    0x63: ("vin_mv", 4, False),
+    0x64: ("iin_ma", 4, True),
 }
+
+# The board sends a set in this order; the first and last are what the host
+# uses to bracket one set. Changing the order in stream.c changes this.
+STREAM_FIRST = "vbus_mv"
+STREAM_LAST = "flags"
 
 
 def encode(op: int, payload: bytes = b"") -> bytes:
@@ -101,8 +111,8 @@ class StreamParser:
                 continue
             if len(self.buf) < 2 + size:
                 return out
-            name, _ = known
-            value = int.from_bytes(self.buf[2 : 2 + size], "little")
+            name, _, signed = known
+            value = int.from_bytes(self.buf[2 : 2 + size], "little", signed=signed)
             del self.buf[: 2 + size]
             self.frames += 1
             out.append((name, value))
@@ -141,14 +151,18 @@ class Board:
 
     def summary(self) -> str:
         with self.lock:
-            vbus = self.latest.get("vbus_mv")
-            duty = self.latest.get("duty")
-            flags = self.latest.get("flags")
-        if vbus is None:
+            latest = dict(self.latest)
+        if "vbus_mv" not in latest:
             return "no telemetry yet"
+        vbus = latest["vbus_mv"] / 1000.0
+        vin = latest.get("vin_mv", 0) / 1000.0
+        iin = latest.get("iin_ma", 0) / 1000.0
+        duty = latest.get("duty", 0)
+        flags = latest.get("flags", 0)
         return (
-            f"vbus {vbus / 1000:6.2f} V   duty {duty:4d}/1000   flags 0x{flags:02X}"
-            f"   [{self.parser.frames} frames, {self.parser.resyncs} bytes resynced]"
+            f"vin {vin:6.3f} V  iin {iin:7.3f} A  pin {vin * iin:7.2f} W  "
+            f"vbus {vbus:6.2f} V  duty {duty:4d}/1000  flags 0x{flags:02X}"
+            f"  [{self.parser.frames} frames, {self.parser.resyncs} resynced]"
         )
 
     def send(self, op: int, payload: bytes = b"") -> None:
@@ -174,7 +188,8 @@ def pick_port() -> str | None:
 
 
 HELP = """commands
-  reset | clearfault | stop | mppt | cv | chmppt   send a system command
+  reset | clearfault | stop                        send a system command
+  mppt | cv | chmppt | ivsweep                     run a mode
   raw <op-hex> [byte-hex ...]                      send an arbitrary frame
   watch                                            toggle telemetry printing
   rate <interval_ms>                               set the watch print interval

@@ -11,6 +11,11 @@ Captures telemetry for --length seconds, sending the mode command at --start
 and STOP at --end. Writes stream_plot.csv and stream_plot.svg to the repo root,
 with the command instants marked.
 
+    uv run tools/plotter.py --mode ivsweep --start 2 --end 30 --length 32
+
+--mode ivsweep also writes stream_iv.svg via tools/iv_curve.py, which can
+replot the same CSV afterwards without the board.
+
 Protocol constants come from console.py, which takes them from the firmware.
 """
 
@@ -27,6 +32,7 @@ import serial
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import console  # noqa: E402  - protocol definitions, single source
+import iv_curve  # noqa: E402  - the I-V curve, drawn from the CSV
 
 import matplotlib  # noqa: E402
 matplotlib.use("Agg")
@@ -35,21 +41,22 @@ import matplotlib.pyplot as plt  # noqa: E402
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CSV_PATH = REPO_ROOT / "stream_plot.csv"
 SVG_PATH = REPO_ROOT / "stream_plot.svg"
+IV_SVG_PATH = REPO_ROOT / "stream_iv.svg"
 
 # Modes that can be started. STOP is sent automatically at --end.
-MODES = {"cv": "cv", "mppt": "mppt", "chmppt": "chmppt"}
+MODES = {"cv": "cv", "mppt": "mppt", "chmppt": "chmppt", "ivsweep": "ivsweep"}
 
 
 class Capture:
     def __init__(self, port: str) -> None:
         self.ser = serial.Serial(port, console.BAUD, timeout=0.05)
         self.parser = console.StreamParser()
-        # (t_board, t_host, vbus_mv, duty, flags), one row per completed set
-        self.rows: list[tuple[float, float, int | None, int | None, int | None]] = []
+        # One row per completed set; ROW_FIELDS names the columns.
+        self.rows: list[tuple] = []
         self.events: list[tuple[float, str]] = []
         self.latest: dict[str, int] = {}
         self.ticks = -1   # sets seen; the board emits one every STREAM_PERIOD_MS
-        self.partial = 0  # sets that did not deliver all three packets
+        self.partial = 0  # sets that did not deliver every packet
         self.complete = True
         self.recording = True
         self.lock = threading.Lock()
@@ -75,18 +82,20 @@ class Capture:
                 if not self.recording:
                     continue
                 with self.lock:
-                    if name == "vbus_mv":  # first packet of a set
+                    if name == console.STREAM_FIRST:
                         if self.ticks >= 0 and not self.complete:
                             self.partial += 1
                         self.ticks += 1
                         self.complete = False
                     self.latest[name] = value
-                    if name == "flags":  # last packet of a set
+                    if name == console.STREAM_LAST:
                         self.complete = True
                         self.rows.append((
                             self.ticks * console.STREAM_PERIOD_MS / 1000.0,
                             now,
                             self.latest.get("vbus_mv"),
+                            self.latest.get("vin_mv"),
+                            self.latest.get("iin_ma"),
                             self.latest.get("duty"),
                             self.latest.get("flags"),
                         ))
@@ -114,38 +123,27 @@ def sleep_until(cap: Capture, t: float) -> None:
         time.sleep(remaining)
 
 
+# Row layout, in wire order. Indices into Capture.rows.
+T, T_HOST, VBUS_MV, VIN_MV, IIN_MA, DUTY, FLAGS = range(7)
+
+
 def write_csv(cap: Capture) -> None:
     with CSV_PATH.open("w", newline="") as fh:
         w = csv.writer(fh)
-        w.writerow(["t_s", "t_host_s", "vbus_mv", "duty", "flags", "event"])
+        w.writerow(["t_s", "t_host_s", "vbus_mv", "vin_mv", "iin_ma", "duty", "flags", "event"])
         pending = sorted(cap.events)
-        for t, t_host, vbus, duty, flags in cap.rows:
+        for row in cap.rows:
             label = ""
-            while pending and pending[0][0] <= t:
+            while pending and pending[0][0] <= row[T]:
                 label = pending.pop(0)[1]
-            w.writerow([f"{t:.4f}", f"{t_host:.4f}", vbus, duty, flags, label])
+            w.writerow([f"{row[T]:.4f}", f"{row[T_HOST]:.4f}", *row[VBUS_MV:], label])
 
 
-def write_svg(cap: Capture, plot_start: float, length: float) -> None:
-    rows = cap.rows
-    t = [r[0] for r in rows]
-    vbus = [(r[2] / 1000.0) if r[2] is not None else None for r in rows]
-    duty = [r[3] for r in rows]
-    flags = [r[4] for r in rows]
+def scaled(rows: list[tuple], index: int, divisor: float) -> list[float | None]:
+    return [(r[index] / divisor) if r[index] is not None else None for r in rows]
 
-    fig, axes = plt.subplots(3, 1, sharex=True, figsize=(11, 7),
-                             gridspec_kw={"height_ratios": [3, 3, 1]})
-    window = f"{plot_start:g}-{length:g} s" if plot_start else f"{length:g} s"
-    fig.suptitle(f"stream capture — {window}")
 
-    axes[0].plot(t, vbus, lw=1.2, color="#1f77b4")
-    axes[0].set_ylabel("vbus (V)")
-    axes[1].plot(t, duty, lw=1.2, color="#d62728", drawstyle="steps-post")
-    axes[1].set_ylabel("duty (/1000)")
-    axes[2].plot(t, flags, lw=1.2, color="#7f7f7f", drawstyle="steps-post")
-    axes[2].set_ylabel("flags")
-    axes[2].set_xlabel("time (s)")
-
+def mark_events(cap: Capture, axes, plot_start: float, length: float) -> None:
     colours = {"stop": "#333333"}
     for when, verb in cap.events:
         if not (plot_start <= when <= length):
@@ -156,6 +154,31 @@ def write_svg(cap: Capture, plot_start: float, length: float) -> None:
         axes[0].annotate(verb, xy=(when, 1.01), xycoords=("data", "axes fraction"),
                          ha="center", va="bottom", fontsize=8, color=colour)
 
+
+def write_svg(cap: Capture, plot_start: float, length: float) -> None:
+    rows = cap.rows
+    t = [r[T] for r in rows]
+
+    fig, axes = plt.subplots(4, 1, sharex=True, figsize=(11, 9),
+                             gridspec_kw={"height_ratios": [3, 3, 3, 1]})
+    window = f"{plot_start:g}-{length:g} s" if plot_start else f"{length:g} s"
+    fig.suptitle(f"stream capture \u2014 {window}")
+
+    axes[0].plot(t, scaled(rows, VIN_MV, 1000.0), lw=1.2, color="#ff7f0e", label="vin (ch A)")
+    axes[0].plot(t, scaled(rows, VBUS_MV, 1000.0), lw=1.2, color="#1f77b4", label="vbus")
+    axes[0].set_ylabel("volts")
+    axes[0].legend(loc="upper left", fontsize=8)
+    axes[1].plot(t, scaled(rows, IIN_MA, 1000.0), lw=1.2, color="#9467bd")
+    axes[1].set_ylabel("iin (A)")
+    axes[1].axhline(0.0, color="#999999", lw=0.8)
+    axes[2].plot(t, [r[DUTY] for r in rows], lw=1.2, color="#d62728", drawstyle="steps-post")
+    axes[2].set_ylabel("duty (/1000)")
+    axes[3].plot(t, [r[FLAGS] for r in rows], lw=1.2, color="#7f7f7f", drawstyle="steps-post")
+    axes[3].set_ylabel("flags")
+    axes[3].set_xlabel("time (s)")
+
+    mark_events(cap, axes, plot_start, length)
+
     for ax in axes:
         ax.grid(alpha=0.3)
         ax.set_xlim(plot_start, length)
@@ -165,32 +188,46 @@ def write_svg(cap: Capture, plot_start: float, length: float) -> None:
     plt.close(fig)
 
 
-def summarise(cap: Capture, plot_start: float, length: float) -> None:
+def summarise(cap: Capture, plot_start: float, length: float, iv: bool) -> None:
     rows = cap.rows
-    print(f"\n{len(rows)} sets, {cap.parser.frames} packets, {cap.parser.resyncs} bytes resynced, {cap.partial} partial")
+    print(f"\n{len(rows)} sets, {cap.parser.frames} packets, "
+          f"{cap.parser.resyncs} bytes resynced, {cap.partial} partial")
     if not rows:
         print("no telemetry received - is the board powered and streaming?")
         return
-    vbus = [r[2] for r in rows if r[2] is not None]
-    duty = [r[3] for r in rows if r[3] is not None]
-    if vbus:
-        print(f"  vbus  min {min(vbus)/1000:6.2f} V   max {max(vbus)/1000:6.2f} V   final {vbus[-1]/1000:6.2f} V")
-    if duty:
-        print(f"  duty  min {min(duty):4d}       max {max(duty):4d}       final {duty[-1]:4d}")
+
+    def span(index: int, divisor: float, unit: str, name: str, fmt: str = "6.2f") -> None:
+        vals = [r[index] for r in rows if r[index] is not None]
+        if not vals:
+            return
+        lo, hi, last = min(vals) / divisor, max(vals) / divisor, vals[-1] / divisor
+        print(f"  {name:4s} min {lo:{fmt}} {unit}   max {hi:{fmt}} {unit}   final {last:{fmt}} {unit}")
+
+    span(VIN_MV, 1000.0, "V", "vin", "6.3f")
+    span(IIN_MA, 1000.0, "A", "iin", "6.3f")
+    span(VBUS_MV, 1000.0, "V", "vbus")
+    span(DUTY, 1.0, " ", "duty", "6.0f")
+
+    if iv:
+        iv_curve.render(CSV_PATH, IV_SVG_PATH)
+
     # t_s is reconstructed from the set count, so cross-check it against the
     # wall clock. Drift means sets were lost, not merely delayed.
     if len(rows) > 1:
-        board, host = rows[-1][0] - rows[0][0], rows[-1][1] - rows[0][1]
+        board, host = rows[-1][T] - rows[0][T], rows[-1][T_HOST] - rows[0][T_HOST]
         if host > 0 and abs(board - host) > 0.05 * host:
             print(f"  WARNING board clock {board:.2f} s vs host {host:.2f} s"
                   f" - sets were dropped, t_s is not trustworthy")
     for when, verb in cap.events:
-        if rows and when > rows[-1][0]:
+        if rows and when > rows[-1][T]:
             print(f"  note  {verb} sent at {when:.2f} s, after the capture window")
         elif not (plot_start <= when <= length):
             print(f"  note  {verb} at {when:.2f} s is outside the plotted window"
                   f" ({plot_start:g}-{length:g} s); it is still in the CSV")
-    print(f"\nwrote {CSV_PATH.name} and {SVG_PATH.name}")
+    written = f"{CSV_PATH.name} and {SVG_PATH.name}"
+    if iv and IV_SVG_PATH.exists():
+        written += f" and {IV_SVG_PATH.name}"
+    print(f"\nwrote {written}")
 
 
 def main() -> int:
@@ -203,6 +240,8 @@ def main() -> int:
     ap.add_argument("--length", type=float, default=8.0,
                     help="capture seconds; may be less than --end to stop after the plot")
     ap.add_argument("--port", help="serial port; auto-detected if omitted")
+    ap.add_argument("--iv", action="store_true",
+                    help="also write the I-V curve; implied by --mode ivsweep")
     args = ap.parse_args()
 
     if not (0 <= args.start < args.end and args.start < args.length):
@@ -241,7 +280,7 @@ def main() -> int:
 
     write_csv(cap)  # always the full capture, regardless of --plot_start
     write_svg(cap, args.plot_start, args.length)
-    summarise(cap, args.plot_start, args.length)
+    summarise(cap, args.plot_start, args.length, args.iv or args.mode == "ivsweep")
     return 0
 
 

@@ -90,6 +90,8 @@ uv run tools/console.py            # send commands, watch telemetry
 uv run tools/console.py --list     # show candidate serial ports
 uv run tools/console.py --watch    # start with telemetry printing on
 uv run tools/plotter.py --mode cv --start 2 --end 5 --length 8
+uv run tools/iv_curve.py           # replot stream_plot.csv as an I-V curve
+uv run tools/live_plot.py          # live V-I scope with a fading point cloud
 uv run tools/gen_ntc_table.py      # regenerate an NTC lookup table
 ```
 
@@ -98,7 +100,43 @@ sends the mode command at `--start` and STOP at `--end`, then writes
 `stream_plot.csv` and `stream_plot.svg` to the repo root with the command
 instants marked. It imports its protocol definitions from `console.py` rather
 than repeating them, so there is one place to fix when the firmware changes.
-Both output files are gitignored.
+
+`iv_curve.py` turns a `stream_plot.csv` into `stream_iv.svg` - input voltage and
+power against input current, plus the same points against commanded duty. It
+works from the CSV alone, so a capture can be replotted without the board, and
+`plotter.py` calls its `render()` rather than carrying a second copy. It trims
+to the rows between the mode command and STOP using the `event` column, drops
+samples whose flags say the telemetry was incomplete or the channel was not
+switching, and collapses the ~40 identical rows per telemetry sample down to one
+settled point per duty *visit*. Per visit, not per duty value: the sweep runs
+`SWEEP_CYCLES` of 0 -> MAX -> 0, so every duty is reached 2N times and the
+passes are drawn separately - up-sweeps and down-sweeps in different colours,
+opacity rising with cycle number, which is what makes hysteresis and source
+drift visible at all. `--rload`
+adds stage efficiency from `vbus`, and refuses to plot it if the result exceeds
+100 % - that only means vbus is not across the resistor named.
+
+All three output files are gitignored.
+
+`live_plot.py` is the live version: a V-I plane where each telemetry sample
+lands as a point and fades out over `--persist` seconds, beside time series of
+vin/vbus, iin, pin and duty. The green star is the best power inside the
+persistence window and the dashed hyperbola is that power level, so an MPPT run
+can be judged by whether the operating point sits on the star or hunts around
+it. Points are added only when the measurement changes, so one telemetry sample
+never stacks 40 dots on a spot.
+
+It also carries a **command prompt on stdin, taking the same verbs as
+`console.py`** off the same `OPCODES` table so the two cannot drift, plus
+`clear`, `persist`, `window` and `save` for the plot itself. Commands live here
+because **only one process can hold the COM port** - watching live and
+commanding cannot be split between this and `console.py`. The prompt runs on its
+own thread (`plt.show()` owns the main one) and anything touching the figure is
+queued to the draw callback, since Tk must not be called from another thread.
+
+`--replay <csv> --speed N` feeds a capture through the same path on the file's
+own clock, which is how the tool is verified without hardware; `--save` renders
+a replay headless to a PNG.
 
 `console.py` is the host side of the serial link. It encodes the outgoing
 `[op][size][data][crc]` frames and decodes the incoming `[id][size][data]`

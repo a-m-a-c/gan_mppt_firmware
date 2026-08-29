@@ -333,6 +333,15 @@ to split the ten devices across two I2C interfaces; it is not used.
 one interrupt-driven transfer per loop pass and publishes into
 `channel_x.telem`, sweeping every `TELEM_SWEEP_PERIOD_MS` (40 ms, 25 Hz).
 
+#### Stream flags byte
+
+`Src/app/stream.c` sends one flags byte per set (id `0x62`). Bit 0 is channel A
+telemetry valid; **bit 1 is channel A switching**, added 2026-08-29. Bit 1
+exists because a mode that ends itself leaves `duty_applied` at its last value,
+so the idle readings that follow arrive under the same duty as real curve points
+and the host cannot otherwise tell them apart - it was scoring a post-shutdown
+sample as the end of an I-V curve.
+
 ### Bus voltage
 
 Resistor divider directly on the battery bus, **before** the ideal diode:

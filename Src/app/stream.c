@@ -20,11 +20,21 @@ data: size bytes, little endian
 #define STREAM_ID_VBUS_MV 0x60U
 #define STREAM_ID_DUTY    0x61U
 #define STREAM_ID_FLAGS   0x62U
+#define STREAM_ID_VIN_MV  0x63U
+#define STREAM_ID_IIN_MA  0x64U
 
-#define STREAM_PACKET_COUNT 3U
+#define STREAM_PACKET_COUNT 5U
+
+/* A set is 3*(2+4) + (2+2) + (2+1) = 25 bytes. At 921600 baud, 8N1, that is
+   25 * 10 / 921600 = 271 us of line time per 1 ms period - 27% loaded. */
 
 static uint32_t last_send_ms;
 static uint8_t next_packet;
+
+/* Frozen when a set starts. vin and iin leave in different loop passes, and a
+   telem commit landing between them would put a voltage and a current from
+   different sweeps on the same curve point. */
+static chan_telem_t telem_a;
 
 static void put_u16(uint8_t *out, uint16_t value) {
   out[0] = (uint8_t)value;
@@ -38,6 +48,19 @@ static void put_u32(uint8_t *out, uint32_t value) {
   out[3] = (uint8_t)(value >> 24);
 }
 
+// Clamped, not signed: a negative input voltage is a broken sensor, not a
+// reading, and 0 is already the out-of-range value analog.c publishes.
+static uint32_t volts_to_mv(float v) {
+  if (v <= 0.0f) return 0U;
+  return (uint32_t)(v * 1000.0f);
+}
+
+/* Signed - reverse current through the channel is real and the host has to be
+   able to see it. Two's complement on the wire; the host decodes it back. */
+static int32_t amps_to_ma(float a) {
+  return (int32_t)(a * 1000.0f);
+}
+
 // False if the UART was busy, so the caller retries on the next pass.
 static bool send_packet(uint8_t index) {
   uint8_t payload[4];
@@ -47,11 +70,24 @@ static bool send_packet(uint8_t index) {
       put_u32(payload, sys.vbus_mv);
       return serial_send(STREAM_ID_VBUS_MV, payload, 4U);
     case 1:
+      put_u32(payload, volts_to_mv(telem_a.vin_v));
+      return serial_send(STREAM_ID_VIN_MV, payload, 4U);
+    case 2:
+      put_u32(payload, (uint32_t)amps_to_ma(telem_a.iin_a));
+      return serial_send(STREAM_ID_IIN_MA, payload, 4U);
+    case 3:
       put_u16(payload, channel_a.pwm.duty_applied);
       return serial_send(STREAM_ID_DUTY, payload, 2U);
-    case 2:
-      payload[0] = 0U; // No flags defined yet.
+    case 4: {
+      /* bit 0: channel A telemetry valid.
+         bit 1: channel A switching. A mode that ends itself leaves duty_applied
+         at its last value, so the idle readings that follow arrive under the
+         same duty as real curve points and are otherwise indistinguishable. */
+      uint8_t flags = telem_a.valid ? 0x01U : 0x00U;
+      if (channel_a.pwm.op_state == PWM_STATE_RUNNING) flags |= 0x02U;
+      payload[0] = flags;
       return serial_send(STREAM_ID_FLAGS, payload, 1U);
+    }
   }
   return false;
 }
@@ -68,6 +104,7 @@ void stream_service(void) {
     last_send_ms = now;
     next_packet = 0; // Restart the set. Anything still unsent is abandoned -
                      // a fresh value is worth more than a stale one.
+    telem_a = channel_a.telem;
   }
 
   if (next_packet >= STREAM_PACKET_COUNT) {

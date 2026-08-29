@@ -12,7 +12,8 @@ typedef enum commands {
     SYSTEM_COMMAND_STOP,
     SYSTEM_COMMAND_RUN_MPPT,
     SYSTEM_COMMAND_RUN_SINGLE_CH_CV,
-    SYSTEM_COMMAND_RUN_SINGLE_CH_MPPT
+    SYSTEM_COMMAND_RUN_SINGLE_CH_MPPT,
+    SYSTEM_COMMAND_RUN_SINGLE_CH_IV_SWEEP
 } system_commands_t;
 
 // Run at a start for clean slate.
