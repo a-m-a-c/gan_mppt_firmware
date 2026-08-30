@@ -90,9 +90,11 @@ def settled_samples(rows: list[dict]) -> list[tuple[int, float, float, float]]:
 
     Rows with flags bit 0 clear are dropped: channel_telem.c had not completed
     all four reads, so vin and iin are whatever the last good sweep left. Rows
-    with bit 1 clear are dropped too - the channel was not switching, and a mode
-    that ends itself leaves duty_applied where it was, so the idle readings that
-    follow land on the last duty step and would otherwise replace it.
+    with bit 1 clear are dropped too - the channel was not switching, so the
+    reading is not a point on the curve. Captures taken before pwm_stop() zeroed
+    the duty (2026-08-30) land those idle rows on whatever duty the mode ended
+    at, replacing a real curve point; since then they land on 0, which is the
+    pass-through point and just as wrong.
 
     Captures made before bit 1 existed carry it clear on every row; that reads
     as "no row was switching", so the filter is skipped rather than emptying the

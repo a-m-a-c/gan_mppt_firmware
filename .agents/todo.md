@@ -68,9 +68,3 @@ TimeSeg2 both 1), so the bitrate is not a real number yet.
 ## 017 - Complete perturb_observe.c
 Same format as pi.c. Settle the header interface first, then fill the
 functions.
-
-## 018 - Zero the duty cycle in pwm_stop
-`pwm_start()` now sets duty to zero before enabling the outputs, which fixed
-restarting a channel at the last running duty. Doing the same in `pwm_stop()`
-would leave a stopped channel safe rather than relying on the next start to
-fix it.

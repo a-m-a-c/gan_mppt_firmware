@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GaN MPPT bench</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<header>
+  <h1 class="brand">GaN MPPT <span>bench</span></h1>
+  <span class="sep"></span>
+  <select id="port" title="serial port"></select>
+  <button id="rescan" class="quiet" title="rescan ports">rescan</button>
+  <button id="connect" class="primary">Connect</button>
+  <button id="disconnect" disabled>Disconnect</button>
+  <span class="sep"></span>
+  <span id="pill" class="pill">disconnected</span>
+  <span id="stats" class="stats"></span>
+</header>
+
+<div id="readouts" class="readouts"></div>
+
+<nav id="tabs" class="tabs"></nav>
+
+<main id="main" class="view-all">
+
+  <section class="pane iv-card">
+    <div class="pane-head">
+      <h2 class="label">V&#8211;I plane</h2>
+      <select id="iv-channel" title="channel"></select>
+      <span class="spacer"></span>
+      <button id="iv-clear">clear</button>
+    </div>
+    <div class="canvas-wrap"><canvas id="iv"></canvas></div>
+    <div class="controls" id="iv-controls">
+      <label>persist <input id="persist" type="number" min="1" max="600" step="1" value="60"> s</label>
+      <label>size <input id="point-size" type="range" min="1" max="8" step="0.5" value="3"></label>
+      <label>fade
+        <select id="fade">
+          <option value="linear">linear</option>
+          <option value="sharp">sharp</option>
+          <option value="flat">flat</option>
+        </select>
+      </label>
+      <label><input id="show-trail" type="checkbox" checked> trail</label>
+      <label><input id="show-best" type="checkbox" checked> best</label>
+      <label><input id="show-iso" type="checkbox" checked> iso-power</label>
+      <label><input id="lock-axes" type="checkbox"> lock axes</label>
+      <label class="locked">x <input id="x-max" type="number" min="0.1" step="0.5" value="5"></label>
+      <label class="locked">y <input id="y-max" type="number" min="0.1" step="1" value="40"></label>
+    </div>
+  </section>
+
+  <section class="pane series-card">
+    <div class="pane-head">
+      <h2 class="label">Time series</h2>
+      <label class="field">window <input id="window" type="number" min="2" max="600" step="1" value="30"> s</label>
+      <span class="spacer"></span>
+      <button id="series-clear">clear</button>
+    </div>
+    <div id="panel-toggles" class="panel-toggles"></div>
+    <div id="panels" class="panels"></div>
+  </section>
+
+  <aside class="pane side-card">
+    <div class="pane-head"><h2 class="label">Sequences</h2></div>
+    <div id="sequences" class="sequences"></div>
+    <div id="run-state" class="run-state"></div>
+    <div class="pane-head">
+      <h2 class="label">Captures</h2>
+      <span class="spacer"></span>
+      <button id="captures-refresh" class="quiet">refresh</button>
+    </div>
+    <div id="captures" class="captures"></div>
+  </aside>
+
+</main>
+
+<footer>
+  <section class="pane">
+    <div class="pane-head">
+      <h2 class="label">Command</h2>
+      <span class="spacer"></span>
+      <span class="hint">raw &lt;op-hex&gt; [byte-hex &#8230;]</span>
+    </div>
+    <div id="quick" class="quick"></div>
+    <span class="spacer"></span>
+    <form id="cmd-form" autocomplete="off">
+      <input id="cmd" placeholder="verb, or help &#8212; &#8593;/&#8595; for history"
+             autocomplete="off" spellcheck="false">
+      <button class="primary" type="submit">Send</button>
+    </form>
+  </section>
+
+  <section class="pane">
+    <div class="pane-head">
+      <h2 class="label">Log</h2>
+      <span class="spacer"></span>
+      <button id="log-clear">clear</button>
+    </div>
+    <div id="log" class="log"></div>
+  </section>
+</footer>
+
+<div id="viewer" class="viewer hidden">
+  <div class="viewer-inner">
+    <div class="pane-head">
+      <h2 id="viewer-title" class="label">plot</h2>
+      <span class="spacer"></span>
+      <button id="viewer-close" class="quiet">close</button>
+    </div>
+    <div id="viewer-body" class="viewer-body"></div>
+  </div>
+</div>
+
+<script src="/static/plots.js"></script>
+<script src="/static/app.js"></script>
+</body>
+</html>

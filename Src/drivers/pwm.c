@@ -178,6 +178,10 @@ static void all_channels_stop_hw(void) {
   CLEAR_BIT(hhrtim.Instance->sMasterRegs.MCR, ALL_TIMERS);
 }
 
+/* Deliberately does NOT zero the duty the way pwm_stop() does: this runs in
+   the fault ISR, where pwm_set_duty_cycle()'s HAL software update is not
+   allowed. app.c enters FAULTED and calls pwm_stop_all(), which does it from
+   the main loop. The ISR kills the hardware; the loop tidies the state. */
 static void latch_OCP_fault(const channel_hw_t *hw) {
   channel_t *ch = hw->data;
 
@@ -386,6 +390,17 @@ void pwm_stop(uint32_t channel) {
     set_op_state(ch, PWM_STATE_STOPPED);
   }
   exit_critical(primask);
+
+  /* A stopped channel now reads zero duty instead of whatever the last mode
+     left behind, so "stopped" and "stopped at 70%" are not the same state on
+     the wire or to the next caller. pwm_start() zeroes it too; this makes the
+     safe value true the whole time the channel is down, not just from the
+     next start.
+
+     Outside the critical section on purpose: it takes the HAL lock, while the
+     section above only has to be atomic against the fault ISR - which has
+     already disabled the outputs by the time this runs. */
+  (void)pwm_set_duty_cycle(channel, PWM_DEFAULT_DUTY_CYCLE);
 }
 
 void pwm_stop_all(void) {
@@ -398,6 +413,11 @@ void pwm_stop_all(void) {
     }
   }
   exit_critical(primask);
+
+  // Same reasoning as pwm_stop(), for every channel.
+  for (uint32_t i = 0U; i < CHANNEL_COUNT; i++) {
+    (void)pwm_set_duty_cycle(i, PWM_DEFAULT_DUTY_CYCLE);
+  }
 }
 
 

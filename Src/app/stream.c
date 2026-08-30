@@ -2,6 +2,7 @@
 #include "main.h"
 #include "system.h"
 #include "channel.h"
+#include "mode_single_ch_mppt.h"
 #include "serial.h"
 #include <stdint.h>
 #include <stdbool.h>
@@ -22,11 +23,12 @@ data: size bytes, little endian
 #define STREAM_ID_FLAGS   0x62U
 #define STREAM_ID_VIN_MV  0x63U
 #define STREAM_ID_IIN_MA  0x64U
+#define STREAM_ID_VIN_TARGET_MV 0x65U
 
-#define STREAM_PACKET_COUNT 5U
+#define STREAM_PACKET_COUNT 6U
 
-/* A set is 3*(2+4) + (2+2) + (2+1) = 25 bytes. At 921600 baud, 8N1, that is
-   25 * 10 / 921600 = 271 us of line time per 1 ms period - 27% loaded. */
+/* A set is 3*(2+4) + 2*(2+2) + (2+1) = 29 bytes. At 921600 baud, 8N1, that is
+   29 * 10 / 921600 = 315 us of line time per 1 ms period - 32% loaded. */
 
 static uint32_t last_send_ms;
 static uint8_t next_packet;
@@ -78,11 +80,15 @@ static bool send_packet(uint8_t index) {
     case 3:
       put_u16(payload, channel_a.pwm.duty_applied);
       return serial_send(STREAM_ID_DUTY, payload, 2U);
-    case 4: {
+    case 4:
+      // The running mode's setpoint, 0 when nothing is regulating vin.
+      put_u16(payload, mode_single_ch_mppt_target_mv());
+      return serial_send(STREAM_ID_VIN_TARGET_MV, payload, 2U);
+    case 5: {
       /* bit 0: channel A telemetry valid.
-         bit 1: channel A switching. A mode that ends itself leaves duty_applied
-         at its last value, so the idle readings that follow arrive under the
-         same duty as real curve points and are otherwise indistinguishable. */
+         bit 1: channel A switching. pwm_stop() zeroes the duty, so a stopped
+         channel and one running in pass-through both report 0 - this bit is
+         the only thing separating them. */
       uint8_t flags = telem_a.valid ? 0x01U : 0x00U;
       if (channel_a.pwm.op_state == PWM_STATE_RUNNING) flags |= 0x02U;
       payload[0] = flags;

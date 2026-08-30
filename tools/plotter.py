@@ -3,236 +3,56 @@
 # requires-python = ">=3.11"
 # dependencies = ["pyserial>=3.5", "matplotlib>=3.8"]
 # ///
-"""Scripted bench run: drive the board through a sequence and plot the result.
+"""Scripted bench run from a terminal: drive the board and plot the result.
 
     uv run tools/plotter.py --mode cv --start 2 --end 5 --length 8
+    uv run tools/plotter.py --mode ivsweep --start 2 --end 30 --length 32
+    uv run tools/plotter.py --sequence ivsweep       # a predefined run
+    uv run tools/plotter.py --list                   # what is predefined
 
 Captures telemetry for --length seconds, sending the mode command at --start
-and STOP at --end. Writes stream_plot.csv and stream_plot.svg to the repo root,
-with the command instants marked.
+and STOP at --end. Writes a timestamped CSV and SVG into captures/, with the
+command instants marked; --mode ivsweep also writes the I-V curve.
 
-    uv run tools/plotter.py --mode ivsweep --start 2 --end 30 --length 32
-
---mode ivsweep also writes stream_iv.svg via tools/iv_curve.py, which can
-replot the same CSV afterwards without the board.
-
-Protocol constants come from console.py, which takes them from the firmware.
+This is the headless twin of the browser GUI: both drive tools/gui/capture.py,
+so a change to the capture path or the CSV layout reaches both. The GUI is
+`uv run tools/gui/server.py`.
 """
 
 from __future__ import annotations
 
 import argparse
-import csv
 import sys
-import threading
-import time
 from pathlib import Path
 
-import serial
-
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import console  # noqa: E402  - protocol definitions, single source
-import iv_curve  # noqa: E402  - the I-V curve, drawn from the CSV
+sys.path.insert(0, str(Path(__file__).resolve().parent / "gui"))
 
-import matplotlib  # noqa: E402
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt  # noqa: E402
+import console                                    # noqa: E402
+import capture                                    # noqa: E402
+from link import LinkError, SerialLink            # noqa: E402
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
-CSV_PATH = REPO_ROOT / "stream_plot.csv"
-SVG_PATH = REPO_ROOT / "stream_plot.svg"
-IV_SVG_PATH = REPO_ROOT / "stream_iv.svg"
-
-# Modes that can be started. STOP is sent automatically at --end.
-MODES = {"cv": "cv", "mppt": "mppt", "chmppt": "chmppt", "ivsweep": "ivsweep"}
+MODES = ("cv", "mppt", "chmppt", "ivsweep")
 
 
-class Capture:
-    def __init__(self, port: str) -> None:
-        self.ser = serial.Serial(port, console.BAUD, timeout=0.05)
-        self.parser = console.StreamParser()
-        # One row per completed set; ROW_FIELDS names the columns.
-        self.rows: list[tuple] = []
-        self.events: list[tuple[float, str]] = []
-        self.latest: dict[str, int] = {}
-        self.ticks = -1   # sets seen; the board emits one every STREAM_PERIOD_MS
-        self.partial = 0  # sets that did not deliver every packet
-        self.complete = True
-        self.recording = True
-        self.lock = threading.Lock()
-        self.running = True
-        self.t0 = time.monotonic()
-        self.thread = threading.Thread(target=self._read_loop, daemon=True)
-        self.thread.start()
-
-    def _read_loop(self) -> None:
-        while self.running:
-            try:
-                # Whatever is buffered, not a fixed count - read(256) can never
-                # fill at 1300 B/s, so it always waited out the timeout and
-                # stamped a whole 50 ms batch with a single arrival time.
-                data = self.ser.read(max(1, self.ser.in_waiting))
-            except serial.SerialException:
-                self.running = False
-                return
-            if not data:
-                continue
-            now = time.monotonic() - self.t0
-            for name, value in self.parser.feed(data):
-                if not self.recording:
-                    continue
-                with self.lock:
-                    if name == console.STREAM_FIRST:
-                        if self.ticks >= 0 and not self.complete:
-                            self.partial += 1
-                        self.ticks += 1
-                        self.complete = False
-                    self.latest[name] = value
-                    if name == console.STREAM_LAST:
-                        self.complete = True
-                        self.rows.append((
-                            self.ticks * console.STREAM_PERIOD_MS / 1000.0,
-                            now,
-                            self.latest.get("vbus_mv"),
-                            self.latest.get("vin_mv"),
-                            self.latest.get("iin_ma"),
-                            self.latest.get("duty"),
-                            self.latest.get("flags"),
-                        ))
-
-    def send(self, verb: str) -> None:
-        frame = console.encode(console.OPCODES[verb])
-        self.ser.write(frame)
-        t = time.monotonic() - self.t0
-        with self.lock:
-            self.events.append((t, verb))
-        print(f"  {t:6.3f} s  sent {verb:10s} {frame.hex(' ')}")
-
-    def stop_recording(self) -> None:
-        self.recording = False
-
-    def close(self) -> None:
-        self.running = False
-        self.thread.join(timeout=1.0)
-        self.ser.close()
-
-
-def sleep_until(cap: Capture, t: float) -> None:
-    remaining = t - (time.monotonic() - cap.t0)
-    if remaining > 0:
-        time.sleep(remaining)
-
-
-# Row layout, in wire order. Indices into Capture.rows.
-T, T_HOST, VBUS_MV, VIN_MV, IIN_MA, DUTY, FLAGS = range(7)
-
-
-def write_csv(cap: Capture) -> None:
-    with CSV_PATH.open("w", newline="") as fh:
-        w = csv.writer(fh)
-        w.writerow(["t_s", "t_host_s", "vbus_mv", "vin_mv", "iin_ma", "duty", "flags", "event"])
-        pending = sorted(cap.events)
-        for row in cap.rows:
-            label = ""
-            while pending and pending[0][0] <= row[T]:
-                label = pending.pop(0)[1]
-            w.writerow([f"{row[T]:.4f}", f"{row[T_HOST]:.4f}", *row[VBUS_MV:], label])
-
-
-def scaled(rows: list[tuple], index: int, divisor: float) -> list[float | None]:
-    return [(r[index] / divisor) if r[index] is not None else None for r in rows]
-
-
-def mark_events(cap: Capture, axes, plot_start: float, length: float) -> None:
-    colours = {"stop": "#333333"}
-    for when, verb in cap.events:
-        if not (plot_start <= when <= length):
-            continue  # outside the plotted window; summarise() reports it
-        colour = colours.get(verb, "#2ca02c")
-        for ax in axes:
-            ax.axvline(when, color=colour, ls="--", lw=1.0)
-        axes[0].annotate(verb, xy=(when, 1.01), xycoords=("data", "axes fraction"),
-                         ha="center", va="bottom", fontsize=8, color=colour)
-
-
-def write_svg(cap: Capture, plot_start: float, length: float) -> None:
-    rows = cap.rows
-    t = [r[T] for r in rows]
-
-    fig, axes = plt.subplots(4, 1, sharex=True, figsize=(11, 9),
-                             gridspec_kw={"height_ratios": [3, 3, 3, 1]})
-    window = f"{plot_start:g}-{length:g} s" if plot_start else f"{length:g} s"
-    fig.suptitle(f"stream capture \u2014 {window}")
-
-    axes[0].plot(t, scaled(rows, VIN_MV, 1000.0), lw=1.2, color="#ff7f0e", label="vin (ch A)")
-    axes[0].plot(t, scaled(rows, VBUS_MV, 1000.0), lw=1.2, color="#1f77b4", label="vbus")
-    axes[0].set_ylabel("volts")
-    axes[0].legend(loc="upper left", fontsize=8)
-    axes[1].plot(t, scaled(rows, IIN_MA, 1000.0), lw=1.2, color="#9467bd")
-    axes[1].set_ylabel("iin (A)")
-    axes[1].axhline(0.0, color="#999999", lw=0.8)
-    axes[2].plot(t, [r[DUTY] for r in rows], lw=1.2, color="#d62728", drawstyle="steps-post")
-    axes[2].set_ylabel("duty (/1000)")
-    axes[3].plot(t, [r[FLAGS] for r in rows], lw=1.2, color="#7f7f7f", drawstyle="steps-post")
-    axes[3].set_ylabel("flags")
-    axes[3].set_xlabel("time (s)")
-
-    mark_events(cap, axes, plot_start, length)
-
-    for ax in axes:
-        ax.grid(alpha=0.3)
-        ax.set_xlim(plot_start, length)
-
-    fig.tight_layout()
-    fig.savefig(SVG_PATH)
-    plt.close(fig)
-
-
-def summarise(cap: Capture, plot_start: float, length: float, iv: bool) -> None:
-    rows = cap.rows
-    print(f"\n{len(rows)} sets, {cap.parser.frames} packets, "
-          f"{cap.parser.resyncs} bytes resynced, {cap.partial} partial")
-    if not rows:
-        print("no telemetry received - is the board powered and streaming?")
-        return
-
-    def span(index: int, divisor: float, unit: str, name: str, fmt: str = "6.2f") -> None:
-        vals = [r[index] for r in rows if r[index] is not None]
-        if not vals:
-            return
-        lo, hi, last = min(vals) / divisor, max(vals) / divisor, vals[-1] / divisor
-        print(f"  {name:4s} min {lo:{fmt}} {unit}   max {hi:{fmt}} {unit}   final {last:{fmt}} {unit}")
-
-    span(VIN_MV, 1000.0, "V", "vin", "6.3f")
-    span(IIN_MA, 1000.0, "A", "iin", "6.3f")
-    span(VBUS_MV, 1000.0, "V", "vbus")
-    span(DUTY, 1.0, " ", "duty", "6.0f")
-
-    if iv:
-        iv_curve.render(CSV_PATH, IV_SVG_PATH)
-
-    # t_s is reconstructed from the set count, so cross-check it against the
-    # wall clock. Drift means sets were lost, not merely delayed.
-    if len(rows) > 1:
-        board, host = rows[-1][T] - rows[0][T], rows[-1][T_HOST] - rows[0][T_HOST]
-        if host > 0 and abs(board - host) > 0.05 * host:
-            print(f"  WARNING board clock {board:.2f} s vs host {host:.2f} s"
-                  f" - sets were dropped, t_s is not trustworthy")
-    for when, verb in cap.events:
-        if rows and when > rows[-1][T]:
-            print(f"  note  {verb} sent at {when:.2f} s, after the capture window")
-        elif not (plot_start <= when <= length):
-            print(f"  note  {verb} at {when:.2f} s is outside the plotted window"
-                  f" ({plot_start:g}-{length:g} s); it is still in the CSV")
-    written = f"{CSV_PATH.name} and {SVG_PATH.name}"
-    if iv and IV_SVG_PATH.exists():
-        written += f" and {IV_SVG_PATH.name}"
-    print(f"\nwrote {written}")
+def ad_hoc(mode: str, start: float, end: float, length: float,
+           plot_start: float, iv: bool) -> capture.Sequence:
+    return capture.Sequence(
+        name=mode,
+        label=f"{mode} {start:g}-{end:g} s",
+        steps=((start, mode), (end, "stop")),
+        length=length,
+        plot_start=plot_start,
+        renders=("timeseries", "iv") if iv or mode == "ivsweep" else ("timeseries",),
+    )
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--mode", choices=sorted(MODES), default="cv", help="mode command to start")
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--sequence", help="run a predefined sequence instead of --mode")
+    ap.add_argument("--list", action="store_true", help="list predefined sequences")
+    ap.add_argument("--mode", choices=MODES, default="cv", help="mode command to start")
     ap.add_argument("--start", type=float, default=2.0, help="seconds until the mode command")
     ap.add_argument("--end", type=float, default=5.0, help="seconds until STOP")
     ap.add_argument("--plot_start", type=float, default=0.0,
@@ -242,45 +62,68 @@ def main() -> int:
     ap.add_argument("--port", help="serial port; auto-detected if omitted")
     ap.add_argument("--iv", action="store_true",
                     help="also write the I-V curve; implied by --mode ivsweep")
+    ap.add_argument("--rload", type=float,
+                    help="output load in ohms; adds stage efficiency to the I-V curve")
     args = ap.parse_args()
 
-    if not (0 <= args.start < args.end and args.start < args.length):
-        print("need 0 <= start < end and start < length", file=sys.stderr)
-        return 2
-    if not 0 <= args.plot_start < args.length:
-        print("need 0 <= plot_start < length", file=sys.stderr)
-        return 2
+    if args.list:
+        for seq in capture.SEQUENCES:
+            steps = ", ".join(f"{w:g}s {v}" for w, v in seq.steps)
+            print(f"  {seq.name:10s} {seq.length:5g}s  {steps}")
+        return 0
 
-    port = args.port or console.pick_port()
-    if port is None:
-        print("no serial port found; try: uv run tools/console.py --list", file=sys.stderr)
+    if args.sequence:
+        seq = capture.SEQUENCES_BY_NAME.get(args.sequence)
+        if seq is None:
+            print(f"unknown sequence: {args.sequence}  (try --list)", file=sys.stderr)
+            return 2
+    else:
+        if not (0 <= args.start < args.end and args.start < args.length):
+            print("need 0 <= start < end and start < length", file=sys.stderr)
+            return 2
+        if not 0 <= args.plot_start < args.length:
+            print("need 0 <= plot_start < length", file=sys.stderr)
+            return 2
+        seq = ad_hoc(args.mode, args.start, args.end, args.length,
+                     args.plot_start, args.iv)
+
+    link = SerialLink()
+    try:
+        port = link.open(args.port)
+    except LinkError as exc:
+        print(f"{exc}; try: uv run tools/console.py --list", file=sys.stderr)
         return 1
 
-    try:
-        cap = Capture(port)
-    except serial.SerialException as exc:
-        print(f"could not open {port}: {exc}", file=sys.stderr)
-        return 1
+    recorder = capture.Recorder()
+    link.subscribe(recorder.feed)
 
-    print(f"capturing {args.length:g} s on {port} at {console.BAUD}")
+    def send(verb: str) -> None:
+        frame = link.send(verb)
+        print(f"  {link.clock():6.3f} s  sent {verb:10s} {frame.hex(' ')}")
+
+    print(f"capturing {seq.length:g} s on {port} at {console.BAUD}")
+    run = capture.SequenceRun(seq, send, recorder, link.clock).start()
     try:
-        sleep_until(cap, args.start)
-        cap.send(args.mode)
-        # --end may fall after --length, so run whichever comes first.
-        for when, what in sorted([(args.end, "stop"), (args.length, "capture")]):
-            sleep_until(cap, when)
-            if what == "stop":
-                cap.send("stop")
-            else:
-                cap.stop_recording()
+        while not run.finished.wait(0.25):
+            pass
     except KeyboardInterrupt:
-        print("\ninterrupted - writing what was captured")
+        print("\ninterrupted - stopping the board and writing what was captured")
+        run.cancel()
+        run.join(timeout=2.0)
     finally:
-        cap.close()
+        link.unsubscribe(recorder.feed)
+        link.close()
 
-    write_csv(cap)  # always the full capture, regardless of --plot_start
-    write_svg(cap, args.plot_start, args.length)
-    summarise(cap, args.plot_start, args.length, args.iv or args.mode == "ivsweep")
+    if run.error:
+        print(f"sequence error: {run.error}", file=sys.stderr)
+
+    paths = capture.capture_paths(seq.name)
+    summary, written = capture.render(seq, recorder, paths, args.rload)
+    print()
+    for line in summary:
+        print(f"  {line}")
+    print("\nwrote " + ", ".join(str(p.relative_to(capture.REPO_ROOT))
+                                 for p in written.values()))
     return 0
 
 

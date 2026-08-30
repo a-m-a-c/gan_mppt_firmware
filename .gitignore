@@ -45,7 +45,12 @@ desktop.ini
 *.swp
 *.swo
 
-# Bench capture output (tools/plotter.py)
+# Python bytecode (tools/)
+__pycache__/
+*.pyc
+
+# Bench capture output (tools/plotter.py, tools/gui)
+captures/
 stream_plot.csv
 stream_plot.svg
 stream_iv.svg

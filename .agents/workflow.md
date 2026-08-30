@@ -81,79 +81,92 @@ The loop:
 
 ### Host tools
 
-Python tooling runs under **`uv`, never `pip`**. Single-file scripts carry
-PEP 723 inline dependency metadata, so `uv run` is the whole setup — no venv,
-no `requirements.txt`, no `pyproject.toml`.
+Python tooling runs under **`uv`, never `pip`**. Scripts carry PEP 723 inline
+dependency metadata, so `uv run` is the whole setup — no venv, no
+`requirements.txt`, no `pyproject.toml`.
 
 ```
+uv run tools/gui/server.py         # the browser GUI; open the printed URL
 uv run tools/console.py            # send commands, watch telemetry
 uv run tools/console.py --list     # show candidate serial ports
-uv run tools/console.py --watch    # start with telemetry printing on
 uv run tools/plotter.py --mode cv --start 2 --end 5 --length 8
-uv run tools/iv_curve.py           # replot stream_plot.csv as an I-V curve
-uv run tools/live_plot.py          # live V-I scope with a fading point cloud
+uv run tools/plotter.py --list     # the predefined sequences
+uv run tools/iv_curve.py <csv>     # replot a capture as an I-V curve
 uv run tools/gen_ntc_table.py      # regenerate an NTC lookup table
 ```
 
-`plotter.py` is the scripted bench run: it captures for `--length` seconds,
-sends the mode command at `--start` and STOP at `--end`, then writes
-`stream_plot.csv` and `stream_plot.svg` to the repo root with the command
-instants marked. It imports its protocol definitions from `console.py` rather
-than repeating them, so there is one place to fix when the firmware changes.
+**`tools/gui/` is the bench GUI** and the normal way to drive the board:
+live plots, a command line, and the scripted runs, in one page at
+`http://127.0.0.1:8000/`. It replaced `live_plot.py` on 2026-08-29.
 
-`iv_curve.py` turns a `stream_plot.csv` into `stream_iv.svg` - input voltage and
-power against input current, plus the same points against commanded duty. It
-works from the CSV alone, so a capture can be replotted without the board, and
-`plotter.py` calls its `render()` rather than carrying a second copy. It trims
-to the rows between the mode command and STOP using the `event` column, drops
-samples whose flags say the telemetry was incomplete or the channel was not
-switching, and collapses the ~40 identical rows per telemetry sample down to one
-settled point per duty *visit*. Per visit, not per duty value: the sweep runs
-`SWEEP_CYCLES` of 0 -> MAX -> 0, so every duty is reached 2N times and the
-passes are drawn separately - up-sweeps and down-sweeps in different colours,
-opacity rising with cycle number, which is what makes hysteresis and source
-drift visible at all. `--rload`
-adds stage efficiency from `vbus`, and refuses to plot it if the result exceeds
-100 % - that only means vbus is not across the resistor named.
+The server process **owns the serial port** and the browser talks to it over a
+WebSocket. That is the same "only one process can hold the COM port"
+constraint `live_plot.py` had to design around by cramming a command prompt
+into its plot window — here one holder serves any number of tabs, and connect
+/ disconnect is a button rather than a process lifetime. Disconnecting sends
+STOP first: the board should not be left switching with nothing watching it.
+Bound to `127.0.0.1`, with no authentication of any kind.
 
-All three output files are gitignored.
+Its layout:
 
-`live_plot.py` is the live version: a V-I plane where each telemetry sample
-lands as a point and fades out over `--persist` seconds, beside time series of
-vin/vbus, iin, pin and duty. The green star is the best power inside the
-persistence window and the dashed hyperbola is that power level, so an MPPT run
-can be judged by whether the operating point sits on the star or hunts around
-it. Points are added only when the measurement changes, so one telemetry sample
-never stacks 40 dots on a spot.
+| File | What it is |
+|---|---|
+| `gui/server.py` | FastAPI app: REST for connect/ports/captures, one WebSocket, one 25 Hz pump that drains the live buffers to every tab. |
+| `gui/link.py` | `SerialLink` — the port holder, one reader thread, subscribers fanned out from it. `ReplayLink` presents the same surface from a capture CSV. |
+| `gui/capture.py` | `Recorder`, the `SEQUENCES` table and `SequenceRun`. Shared with `plotter.py`, so the capture path and the CSV layout have one implementation. |
+| `gui/schema.py` | Field annotations — label, unit, scale, colour, panel, channel. |
+| `gui/static/` | `plots.js` (two canvas classes), `app.js`, `index.html`, `style.css`. No build step, no CDN, no JS dependencies. |
 
-It also carries a **command prompt on stdin, taking the same verbs as
-`console.py`** off the same `OPCODES` table so the two cannot drift, plus
-`clear`, `persist`, `window` and `save` for the plot itself. Commands live here
-because **only one process can hold the COM port** - watching live and
-commanding cannot be split between this and `console.py`. The prompt runs on its
-own thread (`plt.show()` owns the main one) and anything touching the figure is
-queued to the draw callback, since Tk must not be called from another thread.
+**The browser is told what to draw; it hardcodes no field name.** The field
+list comes from `console.STREAM`, which comes from `Src/app/stream.c`;
+`schema.py` only annotates it, and an unannotated new id still plots. So a new
+packet id reaches the screen through `console.STREAM` alone, and a second
+channel is an entry per field carrying `channel`. New bench routines are
+entries in `capture.SEQUENCES` — a dict, not code.
 
-`--replay <csv> --speed N` feeds a capture through the same path on the file's
-own clock, which is how the tool is verified without hardware; `--save` renders
-a replay headless to a PNG.
+`uv run tools/gui/server.py --replay <csv> --speed 4` drives the whole GUI
+from a capture instead of the port. **That is how the plotting is verified
+without hardware**, and it is the only check an agent can run on this tool.
 
-`console.py` is the host side of the serial link. It encodes the outgoing
-`[op][size][data][crc]` frames and decodes the incoming `[id][size][data]`
-stream - **the two directions do not share a format**, and both sets of
-constants are copied from the firmware with the file they came from named
-next to them.
+`console.py` is the host side of the serial link and **the single source for
+the protocol** — every other tool imports its constants. It encodes the
+outgoing `[op][size][data][crc]` frames and decodes the incoming
+`[id][size][data]` stream — **the two directions do not share a format**, and
+both sets of constants are copied from the firmware with the file they came
+from named next to them.
 
 Its stream parser resyncs by validating each id against its expected width,
 because connecting mid-stream is the normal case. It also refuses to send a
 payload over 8 bytes, since `serial.c` latches on one and that costs a power
 cycle.
 
-`gen_ntc_table.py` is the only host tool. Everything that talked to the board
-has been deleted: `bench_run.py` and `dev_monitor.py` with `dev_reporter` on
-2026-08-24, and `telem_gui.py` / `stream_telem.py` earlier - they spoke the
-protocol removed in `efaf6bb`. `git show efaf6bb^:Inc/app/command.h` is the
-record of that wire format.
+`plotter.py` is the headless twin of the GUI's sequence runner: it captures for
+`--length` seconds, sends the mode command at `--start` and STOP at `--end`.
+Both drive `gui/capture.py`, so there is one place to fix. Output is a
+timestamped CSV and SVG in `captures/` (gitignored), with the command instants
+marked; `--mode ivsweep` also writes the I-V curve.
+
+`iv_curve.py` turns a capture CSV into an I-V curve — input voltage and power
+against input current, plus the same points against commanded duty. It works
+from the CSV alone, so a capture can be replotted without the board, and
+`capture.py` calls its `render()` rather than carrying a second copy. It trims
+to the rows between the mode command and STOP using the `event` column, drops
+samples whose flags say the telemetry was incomplete or the channel was not
+switching, and collapses the ~40 identical rows per telemetry sample down to
+one settled point per duty *visit*. Per visit, not per duty value: the sweep
+runs `SWEEP_CYCLES` of 0 -> MAX -> 0, so every duty is reached 2N times and the
+passes are drawn separately — up-sweeps and down-sweeps in different colours,
+opacity rising with cycle number, which is what makes hysteresis and source
+drift visible at all. `--rload` adds stage efficiency from `vbus`, and refuses
+to plot it if the result exceeds 100 % — that only means vbus is not across the
+resistor named.
+
+`gen_ntc_table.py` is the only host tool that never touches the board.
+Everything else that once did has been deleted: `live_plot.py` on 2026-08-29
+when the GUI replaced it, `bench_run.py` and `dev_monitor.py` with
+`dev_reporter` on 2026-08-24, and `telem_gui.py` / `stream_telem.py` earlier —
+they spoke the protocol removed in `efaf6bb`. `git show
+efaf6bb^:Inc/app/command.h` is the record of that wire format.
 
 
 ### Serial protocol — TODO, not implemented

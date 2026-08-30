@@ -70,10 +70,12 @@ STREAM = {
     0x62: ("flags", 1, False),
     0x63: ("vin_mv", 4, False),
     0x64: ("iin_ma", 4, True),
+    0x65: ("vin_target_mv", 2, False),
 }
 
 # The board sends a set in this order; the first and last are what the host
-# uses to bracket one set. Changing the order in stream.c changes this.
+# uses to bracket one set. Changing the order in stream.c changes this - a new
+# packet goes BEFORE flags, or every parser here loses its set boundary.
 STREAM_FIRST = "vbus_mv"
 STREAM_LAST = "flags"
 
