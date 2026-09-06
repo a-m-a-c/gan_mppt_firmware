@@ -19,6 +19,10 @@ void pwm_set_frequency(uint32_t channel, uint32_t frequency);
 bool pwm_start(uint32_t channel);
 void pwm_stop(uint32_t channel);
 void pwm_stop_all(void);
+// Main-loop fault query: live inputs, pending flags, and software latches.
+bool pwm_faults_present(void);
+// Stops every channel; succeeds only when all OVP/OCP faults are clear.
+bool pwm_clear_faults(void);
 bool pwm_clear_OCP_fault(uint32_t channel);
 bool pwm_clear_OVP_fault(void);
 

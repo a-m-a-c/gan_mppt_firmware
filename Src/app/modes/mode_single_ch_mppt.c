@@ -110,6 +110,10 @@ static mode_state_t finish(mode_state_t state) {
 }
 
 uint16_t mode_single_ch_mppt_target_mv(void) {
+  // The central FSM can abort the mode before its next service pass.
+  if (sys.mode != MODE_SINGLE_CH_MPPT || channel_a.pwm.op_state != PWM_STATE_RUNNING) {
+    return 0U;
+  }
   return vin_target_mv;
 }
 

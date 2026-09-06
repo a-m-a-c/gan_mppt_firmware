@@ -164,3 +164,30 @@ at duty 525, vin 5.510 V at duty 0, ratio 0.844. That is high for silicon
 true open circuit - hardware.md safety note 1's body-diode path is already
 feeding ~1.3 A into the fixture, which is visible in the capture as the idle
 current at duty 0.
+
+## Tracking quantized duty can erase the PI integrator's progress
+
+**Observed in code, 2026-09-06; not bench verified.** Both single-channel CV
+and MPPT cast the result of `pi_update()` to `uint16_t`, apply their slew
+limit, then call `pi_track()` unconditionally with the integer duty.
+`pi_track()` replaces the integral with `applied - kp * last_error`, so the
+fractional duty accumulated during that update is discarded even when no
+slew limit or output clamp intervened.
+
+**Evidence.** With unchanged error and an unsaturated output, the next command
+reduces to `floor(previous_duty + ki * error * dt_seconds)`. At CV's 1 ms
+cadence, a 1000 mV error adds `0.6 * 1000 * 0.001 = 0.6` duty units, which
+never accumulates into a whole unit. At MPPT's nominal 40 ms cadence, a 50 mV
+positive PI error adds `0.4 * 50 * 0.040 = 0.8` units, also lost, although
+50 mV is outside the 30 mV arrival band. A float32 numerical reproduction
+starting at duty 400 held duty 400 for 1000 updates in both cases. This checks
+the arithmetic, not the converter response. Negative increments round down
+to a lower duty, so the loss also introduces directional asymmetry.
+
+**Why it matters.** Actuator quantization and actuator limiting are different
+constraints. Tracking a quantized command on every pass prevents integral
+action from correcting small persistent errors and can make a tuning problem
+appear to be plant lag. A correction needs to retain fractional integral
+progress during ordinary updates while still tracking actual limiter action.
+The relevant call sites are `Src/app/modes/mode_single_ch_cv.c` and
+`Src/app/modes/mode_single_ch_mppt.c`; tracking is in `Src/app/control/pi.c`.

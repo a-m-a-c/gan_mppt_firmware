@@ -44,11 +44,24 @@ void app_setup(void) {
 
 static system_state_t prev_state = SYSTEM_STATE_INIT;
 
+static void app_fault_service(void) {
+  if (sys.state == SYSTEM_STATE_RESET) return;
+
+  if (pwm_faults_present()) {
+    sys.state = SYSTEM_STATE_FAULTED;
+  }
+  if (sys.state == SYSTEM_STATE_FAULTED && prev_state != SYSTEM_STATE_FAULTED) {
+    pwm_stop_all();
+    sys.mode = MODE_NONE;
+  }
+}
+
 void app_loop(void) {
   /* Always on Services*/
   serial_service(); // Check for new serial commands.
   command_service(); // Collect commands.
   if (system_command_received(SYSTEM_COMMAND_RESET)) sys.state = SYSTEM_STATE_RESET; // Check for reset
+  app_fault_service();
 
   const bool entered = (sys.state != prev_state); // Check for state transition
   prev_state = sys.state;
@@ -102,7 +115,6 @@ void app_loop(void) {
         mode_request_result_t init_result = mode_begin(sys.mode);
         switch (init_result) {
           case MODE_INIT_FAULT:
-            sys.mode = MODE_NONE;
             sys.state = SYSTEM_STATE_FAULTED;
             break;
           case MODE_INIT_REFUSED:
@@ -123,7 +135,6 @@ void app_loop(void) {
         case MODE_STATE_RUNNING:
           break;
         case MODE_STATE_FAULTED:
-          sys.mode = MODE_NONE;
           sys.state = SYSTEM_STATE_FAULTED;
           break;
         case MODE_STATE_EXIT:
@@ -136,12 +147,11 @@ void app_loop(void) {
 
     /* ------------------------------- FAULTED STATE -------------------------------*/  
     case SYSTEM_STATE_FAULTED: {
-      /* ENTRY BEHAVIOUR */
-      if (entered) pwm_stop_all();
       /* ONGOING BEHAVIOUR */
-      if (system_command_received(SYSTEM_COMMAND_CLEAR_FAULT)) {
+      // A newly entered fault cannot be acknowledged by an earlier command.
+      if (entered || !system_command_received(SYSTEM_COMMAND_CLEAR_FAULT)) break;
+      if (pwm_clear_faults()) {
         sys.state = SYSTEM_STATE_CHECK;
-        break;
       }
       break;
     }
@@ -157,6 +167,8 @@ void app_loop(void) {
       break;
     }
   }
+
+  app_fault_service(); // Also catches faults raised during mode start/service.
 
   /* Always on Services*/
   analog_service();

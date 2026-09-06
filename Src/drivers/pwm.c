@@ -421,6 +421,39 @@ void pwm_stop_all(void) {
 }
 
 
+bool pwm_faults_present(void) {
+  uint32_t primask = enter_critical();
+  bool present = sys.ovp_latched || ovp_is_active() || ovp_is_pending();
+
+  // Keep the ISR from moving a pending flag into its latch between reads.
+  for (uint32_t i = 0U; i < CHANNEL_COUNT && !present; i++) {
+    const channel_hw_t *hw = channel_hw(i);
+    present = hw->data->pwm.ocp_latched || ocp_is_active(hw) || ocp_is_pending(hw);
+  }
+
+  exit_critical(primask);
+  return present;
+}
+
+bool pwm_clear_faults(void) {
+  pwm_stop_all();
+
+  // OVP blocks per-channel clears, so it must be cleared first.
+  if (!pwm_clear_OVP_fault()) {
+    return false;
+  }
+
+  bool cleared = true;
+  for (uint32_t i = 0U; i < CHANNEL_COUNT; i++) {
+    if (!pwm_clear_OCP_fault(i)) {
+      cleared = false;
+    }
+  }
+
+  // A fault may have returned on a channel already cleared above.
+  return cleared && !pwm_faults_present();
+}
+
 bool pwm_clear_OCP_fault(uint32_t channel) {
   const channel_hw_t *hw = channel_hw(channel);
   channel_t *ch = hw->data;

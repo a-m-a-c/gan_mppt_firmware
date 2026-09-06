@@ -30,5 +30,32 @@
 
   // Point IntelliSense at the compile_commands.json CMake generates
   // (CMAKE_EXPORT_COMPILE_COMMANDS is already ON in the CubeMX CMakeLists).
-  "C_Cpp.default.compileCommands": "${workspaceFolder}/build/Debug/compile_commands.json"
+  "C_Cpp.default.compileCommands": "${workspaceFolder}/build/Debug/compile_commands.json",
+  "workbench.colorCustomizations": {
+    "activityBar.activeBackground": "#2a7f59",
+    "activityBar.background": "#2a7f59",
+    "activityBar.foreground": "#e7e7e7",
+    "activityBar.inactiveForeground": "#e7e7e799",
+    "activityBarBadge.background": "#c39fdf",
+    "activityBarBadge.foreground": "#15202b",
+    "activityBarTop.activeBackground": "#2a7f59",
+    "activityBarTop.background": "#2a7f59",
+    "activityBarTop.foreground": "#e7e7e7",
+    "activityBarTop.inactiveForeground": "#e7e7e799",
+    "commandCenter.border": "#e7e7e799",
+    "commandCenter.foreground": "#e7e7e7",
+    "sash.hoverBorder": "#2a7f59",
+    "statusBar.background": "#1d593e",
+    "statusBar.debuggingBackground": "#1d593e",
+    "statusBar.debuggingForeground": "#e7e7e7",
+    "statusBar.foreground": "#e7e7e7",
+    "statusBarItem.hoverBackground": "#2a7f59",
+    "statusBarItem.remoteBackground": "#211030",
+    "statusBarItem.remoteForeground": "#e7e7e7",
+    "titleBar.activeBackground": "#1d593e",
+    "titleBar.activeForeground": "#e7e7e7",
+    "titleBar.inactiveBackground": "#1d593e99",
+    "titleBar.inactiveForeground": "#e7e7e799"
+  },
+  "peacock.color": "#1d593e"
 }
