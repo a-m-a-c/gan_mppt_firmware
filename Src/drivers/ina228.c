@@ -1,6 +1,5 @@
 #include "ina228.h"
 
-/* Register map (datasheet section 7.6). */
 #define INA228_REG_CONFIG     0x00U
 #define INA228_REG_ADC_CONFIG 0x01U
 #define INA228_REG_SHUNT_CAL  0x02U
@@ -9,38 +8,26 @@
 #define INA228_REG_MFG_ID     0x3EU
 #define INA228_REG_DEVICE_ID  0x3FU
 
-#define INA228_MFG_ID    0x5449U /* "TI" */
-#define INA228_DEVICE_ID 0x228U  /* DEVICE_ID bits [15:4]; [3:0] is the die revision */
+#define INA228_MFG_ID    0x5449U
+#define INA228_DEVICE_ID 0x228U
 
 #define INA228_CONFIG_RST 0x8000U
 
-/* MODE=0xB (continuous shunt+bus, temperature disabled), 1052 us conversions,
- * 16-sample averaging -> a full averaged set every ~34 ms. Dropping the
- * temperature conversion shortens the cycle from ~50 ms, and is why the
- * DIETEMP register is not read anywhere. */
+// Continuous shunt + bus, 1052 us each, 16 averages: 2 * 1052 * 16 = 33.664 ms.
 #define INA228_ADC_CONFIG_VALUE 0xBB6AU
 
 #define INA228_I2C_TIMEOUT_MS 10U
 
-/* Scale factor (datasheet section 7.5): the fixed LSB weight of VBUS.
- * CURRENT scales with current_lsb instead, derived per device. */
 #define INA228_VBUS_LSB_V    195.3125e-6f
 
-/* CURRENT_LSB = Imax / 2^19 and SHUNT_CAL = 13107.2e6 * CURRENT_LSB * Rshunt
-   (datasheet section 8.1.2, ADCRANGE = 0). Named so ina228_init() reads like
-   the datasheet rather than like two unexplained floats. */
-#define INA228_CURRENT_LSB_FULL_SCALE 524288.0f /* 2^19 */
+// Datasheet 8.1.2: SHUNT_CAL = 13107.2e6 * CURRENT_LSB * Rshunt (ADCRANGE=0).
+#define INA228_CURRENT_LSB_FULL_SCALE 524288.0f
 #define INA228_SHUNT_CAL_CONSTANT     13107.2e6f
 
-/* A 20-bit result register is left-justified in 24 bits, so the payload is the
-   top 20 bits and the low nibble is padding. */
+// 20-bit results are left-justified in 24 bits.
 #define INA228_REG20_SHIFT    4U
 #define INA228_REG20_SIGN_BIT 0x00080000U
 #define INA228_REG20_SIGN_EXT 0xFFF00000U
-
-/* --------------------------------------------------------------------------
-   Transfers and register decoding. Everything below the public surface.
-   -------------------------------------------------------------------------- */
 
 static bool read_bytes(ina228_t *dev, uint8_t reg, uint8_t *data, uint16_t len)
 {
@@ -68,7 +55,6 @@ static bool read_reg16(ina228_t *dev, uint8_t reg, uint16_t *value)
   return true;
 }
 
-/* VSHUNT/VBUS/CURRENT: a signed 20-bit value left-justified in 24 bits. */
 static int32_t decode_reg20(const uint8_t *data)
 {
   uint32_t raw = (((uint32_t)data[0] << 16) | ((uint32_t)data[1] << 8) | data[2]);
@@ -77,15 +63,11 @@ static int32_t decode_reg20(const uint8_t *data)
 
   if ((raw & INA228_REG20_SIGN_BIT) != 0U)
   {
-    raw |= INA228_REG20_SIGN_EXT; /* sign-extend 20 -> 32 bits */
+    raw |= INA228_REG20_SIGN_EXT;
   }
 
   return (int32_t)raw;
 }
-
-/* --------------------------------------------------------------------------
-   Public surface.
-   -------------------------------------------------------------------------- */
 
 uint8_t ina228_register(ina228_quantity_t quantity)
 {
@@ -99,7 +81,7 @@ uint8_t ina228_register(ina228_quantity_t quantity)
 
 uint16_t ina228_register_size(ina228_quantity_t quantity)
 {
-  (void)quantity; /* both are 20-bit values in 3 bytes */
+  (void)quantity;
   return 3U;
 }
 
@@ -134,7 +116,6 @@ bool ina228_init(ina228_t *dev)
     return false;
   }
 
-  /* Prove the right chip answers at this address before configuring it. */
   if (!read_reg16(dev, INA228_REG_MFG_ID, &mfg_id) || (mfg_id != INA228_MFG_ID))
   {
     return false;
@@ -162,4 +143,3 @@ bool ina228_init(ina228_t *dev)
 
   return write_reg16(dev, INA228_REG_ADC_CONFIG, INA228_ADC_CONFIG_VALUE);
 }
-

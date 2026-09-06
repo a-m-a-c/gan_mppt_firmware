@@ -3,4 +3,4 @@
 
 void status_service(void);
 
-#endif /* STATUS_H */
+#endif

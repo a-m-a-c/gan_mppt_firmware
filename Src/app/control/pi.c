@@ -20,7 +20,6 @@ float pi_update(pi_t *pi, float setpoint, float measurement, float dt_ms) {
   float i_term = pi->integral + pi->ki * error * (dt_ms / 1000.0f);
   float output = p_term + i_term;
 
-  // Clamp
   if (output > pi->out_max) {
     output = pi->out_max;
     pi->clamped = true;
@@ -28,14 +27,13 @@ float pi_update(pi_t *pi, float setpoint, float measurement, float dt_ms) {
     output = pi->out_min;
     pi->clamped = true;
   } else {
-    pi->integral = i_term; // Update integral only if within bounds
+    pi->integral = i_term;
     pi->clamped = false;
   }
   pi->last_error = error;
   return output;
 }
 
-// Updates integral to prevent windup when limiter hits.
 void pi_track(pi_t *pi, float applied) {
   pi->integral = applied - (pi->kp * pi->last_error);
 }

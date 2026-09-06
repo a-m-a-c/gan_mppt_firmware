@@ -9,28 +9,7 @@
 #   "matplotlib>=3.8",
 # ]
 # ///
-"""Browser front end for the board: live plots, a command line, scripted runs.
-
-    uv run tools/gui/server.py            # then open the printed URL
-    uv run tools/gui/server.py --open     # and open it for you
-    uv run tools/gui/server.py --serial COM7 --open
-    uv run tools/gui/server.py --replay captures/<run>.csv --speed 4
-
-This process owns the serial port and the browser talks to it over a
-WebSocket, so the "only one process can hold the COM port" constraint is
-satisfied by one holder serving any number of tabs instead of by cramming a
-command prompt into a plot window.
-
-Nothing here knows a field name. The browser is handed schema.build() on
-connect and draws whatever is in it, so a new packet id in Src/app/stream.c
-reaches the screen through console.STREAM alone.
-
---replay drives the whole GUI from a capture file, which is how the plotting
-is verified without the board.
-
-Bound to 127.0.0.1 by default: this commands power hardware and has no
-authentication of any kind.
-"""
+"""Browser front end for the board: live plots, a command line, scripted runs."""
 
 from __future__ import annotations
 
@@ -58,23 +37,15 @@ import schema  # noqa: E402
 
 STATIC_DIR = HERE / "static"
 
-# 1 kHz of sets is far more than a screen can show, and far more than the
-# telemetry behind it moves (25 Hz). This is for vbus and duty, which do change
-# every set. 20 leaves 50 Hz on the time series.
+
 TIMESERIES_DECIMATE = 20
 
-# Batches are drained at PUMP_HZ; the cap is the backstop for a tab that stalls.
+
 PUMP_HZ = 25
 MAX_BATCH = 4000
 
 
 class LiveState:
-    """Assembles sets, decimates, and holds what the pump has not sent yet.
-
-    Written by the link's reader thread, drained by the asyncio pump, so every
-    buffer is touched under the lock.
-    """
-
     def __init__(self) -> None:
         self.lock = threading.Lock()
         self.derived = schema.active_derived()
@@ -88,7 +59,6 @@ class LiveState:
         self.now = 0.0
 
     def feed(self, name: str, value: int, t: float) -> None:
-        """One decoded packet. A set is complete at console.STREAM_LAST."""
         with self.lock:
             self.latest[name] = value
             self.now = t
@@ -103,15 +73,13 @@ class LiveState:
                 self.latest[der.key] = schema.EXPRESSIONS[der.expr](*values)
 
             if not (self.latest.get("flags", 0) & 0x01):
-                self.dropped += 1   # channel_telem.c did not complete its sweep
+                self.dropped += 1
                 return
 
             if self.sets % TIMESERIES_DECIMATE == 0:
                 self.ts.append((t, dict(self.latest)))
 
-            # A V-I point only when the measurement actually changed. Repeating
-            # one telemetry sample 40 times would stack 40 dots on one spot and
-            # make a stale reading look like a confident one.
+
             for ch, pair in schema.IV_PAIRS.items():
                 x, y = self.latest.get(pair["x"]), self.latest.get(pair["y"])
                 if x is None or y is None:
@@ -164,8 +132,6 @@ def _series_keys(rows) -> list[str]:
 
 
 class Hub:
-    """Everything the process owns: the link, the live buffers, the run in flight."""
-
     def __init__(self) -> None:
         self.link = link_mod.SerialLink()
         self.live = LiveState()
@@ -177,13 +143,12 @@ class Hub:
         self.link.subscribe(self.live.feed)
 
     def set_link(self, new_link) -> None:
-        """Swap the source. --replay drives the whole GUI off a capture file."""
         self.link.unsubscribe(self.live.feed)
         self.link.close()
         self.link = new_link
         self.link.subscribe(self.live.feed)
 
-    # -- log ---------------------------------------------------------------
+
     def log(self, text: str, level: str = "info") -> None:
         self.logs.append({"t": self.link.clock(), "level": level, "text": text})
 
@@ -191,7 +156,7 @@ class Hub:
         out, self.logs = list(self.logs), deque(maxlen=self.logs.maxlen)
         return out
 
-    # -- connection --------------------------------------------------------
+
     def connect(self, port: str | None) -> str:
         chosen = self.link.open(port)
         self.live.reset()
@@ -199,9 +164,6 @@ class Hub:
         return chosen
 
     def disconnect(self) -> None:
-        # A run in flight is holding the board in a mode; drop it before the
-        # port goes away, and stop the board rather than leaving it switching
-        # with nothing watching.
         self.cancel_sequence()
         if self.link.connected and self.link.kind == "serial":
             try:
@@ -219,7 +181,7 @@ class Hub:
                 "stats": self.link.stats(), **self.live.counters(),
                 "sequence": self.run_state}
 
-    # -- commands ----------------------------------------------------------
+
     def send(self, verb: str) -> None:
         frame = self.link.send(verb)
         self.log(f"sent {verb}  {frame.hex(' ')}", "tx")
@@ -228,7 +190,7 @@ class Hub:
         frame = self.link.send_raw(op, payload)
         self.log(f"sent raw  {frame.hex(' ')}", "tx")
 
-    # -- sequences ---------------------------------------------------------
+
     def start_sequence(self, name: str) -> None:
         if self.run is not None and not self.run.finished.is_set():
             raise link_mod.LinkError(f"{self.run_state.get('name')} is still running")
@@ -258,8 +220,8 @@ class Hub:
     def _on_sequence(self, seq, recorder, kind: str, arg) -> None:
         if kind == "step":
             return
-        # Runs on the sequence thread, which is already off the event loop, so
-        # the matplotlib render is allowed to take its time here.
+
+
         self.link.unsubscribe(recorder.feed)
         self.run_state["state"] = "rendering"
         try:
@@ -271,7 +233,7 @@ class Hub:
             for line in summary:
                 self.log(line)
             self.log(f"wrote {', '.join(p.name for p in files.values())}", "ok")
-        except Exception as exc:                 # noqa: BLE001 - surfaced in the UI
+        except Exception as exc:                 # noqa: BLE001
             self.run_state.update(state="error", summary=[str(exc)])
             self.log(f"render failed: {exc}", "error")
 
@@ -303,7 +265,6 @@ async def broadcast(message: dict) -> None:
 
 
 async def pump_loop() -> None:
-    """Single consumer of the live buffers; every tab gets the same batch."""
     tick = 0
     while True:
         await asyncio.sleep(1.0 / PUMP_HZ)
@@ -316,9 +277,8 @@ async def pump_loop() -> None:
         logs = hub.drain_logs()
         if logs:
             await broadcast({"type": "log", "lines": logs})
-        # Counters and the run state at 4 Hz. The browser interpolates the
-        # progress bar off its own clock, so there is nothing to gain from
-        # sending them as often as the samples.
+
+
         if tick % (PUMP_HZ // 4) == 0:
             await broadcast(hub.state())
 
@@ -362,7 +322,6 @@ async def api_captures() -> dict:
 
 @app.get("/captures/{name}")
 async def api_capture_file(name: str) -> FileResponse:
-    # Resolved and re-checked: the name reaches here straight off a URL.
     path = (capture.CAPTURE_DIR / name).resolve()
     if capture.CAPTURE_DIR.resolve() not in path.parents or not path.is_file():
         raise HTTPException(status_code=404, detail="no such capture")

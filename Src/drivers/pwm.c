@@ -3,12 +3,7 @@
 #include "hrtim.h"
 #include "main.h"
 
-/* HRTIM kernel clock. Not a tunable - it follows the PLL chain set up in
-   SystemClock_Config(): HSE 8 MHz -> PLLM 1 -> PLLN 120 -> VCO 960 MHz ->
-   PLLP 2 -> 480 MHz SYSCLK, with RCC_HRTIM1CLK_CPUCLK selecting the CPU clock
-   rather than the APB2 timer clock. That gives 2.0833 ns per tick. Every
-   period and dead-time conversion below is derived from it, so it must be
-   revisited if the PLL chain changes. See .agents/hardware.md. */
+// HRTIM uses the 480 MHz CPU clock (2.083 ns/tick); update if the PLL changes.
 #define PWM_KERNEL_CLOCK_HZ 480000000U
 
 #define ALL_TIMERS                                                         \
@@ -103,7 +98,6 @@ static const channel_hw_t hw_e = {
     .fault_pin = GPIO_PIN_10,
 };
 
-// Channel hardware put in array for easy access
 static const channel_hw_t *const channel_hardware[CHANNEL_COUNT] = {
     [CHANNEL_A] = &hw_a,
     [CHANNEL_B] = &hw_b,
@@ -112,16 +106,13 @@ static const channel_hw_t *const channel_hardware[CHANNEL_COUNT] = {
     [CHANNEL_E] = &hw_e,
 };
 
-// Access channel hardware values using channel number.
 static const channel_hw_t *channel_hw(uint32_t channel) {
   return channel_hardware[channel];
 }
 
-// Controls and updates the status of pwm in each channel.
 static void set_op_state(channel_t *ch, pwm_state_t op_state) {
   ch->pwm.op_state = op_state;
 }
-
 
 static uint32_t clamp(uint32_t value, uint32_t min, uint32_t max) {
   if (value < min) {
@@ -165,9 +156,7 @@ static bool ocp_is_pending(const channel_hw_t *hw) {
   return __HAL_HRTIM_GET_FLAG(&hhrtim, hw->fault_flag) != RESET;
 }
 
-/* Direct register writes, not HAL: the HAL stop calls take __HAL_LOCK and
-   would silently no-op if the handle were busy - unacceptable for a fault
-   stop that must always disable the outputs. */
+// Use registers: HAL locks can make a fault stop return HAL_BUSY without stopping.
 static void channel_stop_hw(const channel_hw_t *hw) {
   SET_BIT(hhrtim.Instance->sCommonRegs.ODISR, hw->output1 | hw->output2);
   CLEAR_BIT(hhrtim.Instance->sMasterRegs.MCR, hw->timer_id);
@@ -178,10 +167,7 @@ static void all_channels_stop_hw(void) {
   CLEAR_BIT(hhrtim.Instance->sMasterRegs.MCR, ALL_TIMERS);
 }
 
-/* Deliberately does NOT zero the duty the way pwm_stop() does: this runs in
-   the fault ISR, where pwm_set_duty_cycle()'s HAL software update is not
-   allowed. app.c enters FAULTED and calls pwm_stop_all(), which does it from
-   the main loop. The ISR kills the hardware; the loop tidies the state. */
+// ISR path: defer duty reset to pwm_stop_all() in the main loop; it takes the HAL lock.
 static void latch_OCP_fault(const channel_hw_t *hw) {
   channel_t *ch = hw->data;
 
@@ -291,8 +277,7 @@ void pwm_set_dead_time(uint32_t channel, uint16_t dead_time) {
 
   dead_time = (uint16_t)clamp(dead_time, PWM_MIN_DEAD_TIME_NS, PWM_MAX_DEAD_TIME_NS);
 
-  /* Rounds up, so the actual dead time is never shorter than requested, and
-     never rounds down to zero. */
+  // Round up to avoid shortening the requested dead time.
   uint64_t ns_ticks = (((uint64_t)dead_time * PWM_KERNEL_CLOCK_HZ) + 999999999ULL) / 1000000000ULL;
   uint32_t dead_time_ticks = (ns_ticks == 0U) ? 1U : (uint32_t)ns_ticks;
 
@@ -320,8 +305,7 @@ void pwm_set_frequency(uint32_t channel, uint32_t frequency) {
   }
 
   frequency = clamp(frequency, PWM_MIN_FREQUENCY_HZ, PWM_MAX_FREQUENCY_HZ);
-  /* Integer division truncates, so the actual frequency lands at or just above
-     what was asked for. */
+
   uint32_t period_ticks = PWM_KERNEL_CLOCK_HZ / frequency;
 
   HRTIM_TimeBaseCfgTypeDef time_base_cfg = {0};
@@ -332,10 +316,8 @@ void pwm_set_frequency(uint32_t channel, uint32_t frequency) {
     Error_Handler();
   }
 
-  /* Reapply duty against the new period so frequency changes preserve duty. */
   uint32_t compare = (period_ticks * clamp(ch->pwm.duty_applied, PWM_MIN_DUTY_CYCLE, PWM_MAX_DUTY_CYCLE)) / PWM_DUTY_SCALE;
 
-  /* Never below the floor - see PWM_MIN_COMPARE_TICKS. */
   if (compare < PWM_MIN_COMPARE_TICKS) {
     compare = PWM_MIN_COMPARE_TICKS;
   }
@@ -364,12 +346,12 @@ bool pwm_start(uint32_t channel) {
     return false;
   }
   pwm_set_duty_cycle(channel, PWM_DEFAULT_DUTY_CYCLE);
-  /* Transfer preloaded values, start the counter, enable the outputs. */
+  // Transfer preloads before enabling outputs so the first pulse uses the new duty.
   SET_BIT(hhrtim.Instance->sCommonRegs.CR2, hw->timer_update);
   SET_BIT(hhrtim.Instance->sMasterRegs.MCR, hw->timer_id);
   SET_BIT(hhrtim.Instance->sCommonRegs.OENR, hw->output1 | hw->output2);
 
-  /* Re-check: a fault edge could have arrived during the enable sequence. */
+  // Catch fault edges arriving during output enable.
   if (latch_present_faults(hw)) {
     exit_critical(primask);
     return false;
@@ -391,15 +373,7 @@ void pwm_stop(uint32_t channel) {
   }
   exit_critical(primask);
 
-  /* A stopped channel now reads zero duty instead of whatever the last mode
-     left behind, so "stopped" and "stopped at 70%" are not the same state on
-     the wire or to the next caller. pwm_start() zeroes it too; this makes the
-     safe value true the whole time the channel is down, not just from the
-     next start.
-
-     Outside the critical section on purpose: it takes the HAL lock, while the
-     section above only has to be atomic against the fault ISR - which has
-     already disabled the outputs by the time this runs. */
+  // Reset duty outside the critical section: pwm_set_duty_cycle() takes the HAL lock.
   (void)pwm_set_duty_cycle(channel, PWM_DEFAULT_DUTY_CYCLE);
 }
 
@@ -414,12 +388,10 @@ void pwm_stop_all(void) {
   }
   exit_critical(primask);
 
-  // Same reasoning as pwm_stop(), for every channel.
   for (uint32_t i = 0U; i < CHANNEL_COUNT; i++) {
     (void)pwm_set_duty_cycle(i, PWM_DEFAULT_DUTY_CYCLE);
   }
 }
-
 
 bool pwm_faults_present(void) {
   uint32_t primask = enter_critical();
@@ -438,7 +410,7 @@ bool pwm_faults_present(void) {
 bool pwm_clear_faults(void) {
   pwm_stop_all();
 
-  // OVP blocks per-channel clears, so it must be cleared first.
+  // OVP blocks per-channel clears, so clear it first.
   if (!pwm_clear_OVP_fault()) {
     return false;
   }
@@ -450,7 +422,7 @@ bool pwm_clear_faults(void) {
     }
   }
 
-  // A fault may have returned on a channel already cleared above.
+  // A previously cleared channel may have faulted again.
   return cleared && !pwm_faults_present();
 }
 
@@ -463,7 +435,6 @@ bool pwm_clear_OCP_fault(uint32_t channel) {
     exit_critical(primask);
     return false;
   }
-  /* A live/pending OVP takes over; a latched OVP blocks per-channel clears. */
   if (ovp_is_active() || ovp_is_pending()) {
     latch_OVP_fault();
     exit_critical(primask);
@@ -473,13 +444,12 @@ bool pwm_clear_OCP_fault(uint32_t channel) {
     exit_critical(primask);
     return false;
   }
-  /* Nothing latched or pending here - already clear (idempotent success). */
+
   if (!ch->pwm.ocp_latched && !ocp_is_active(hw) && !ocp_is_pending(hw)) {
     exit_critical(primask);
     return true;
   }
 
-  /* Refuse while the OCP condition is still physically present. */
   channel_stop_hw(hw);
   if (ocp_is_active(hw)) {
     latch_OCP_fault(hw);
@@ -514,7 +484,6 @@ bool pwm_clear_OVP_fault(void) {
     return true;
   }
 
-  /* A pending edge is a fault even if its pulse ended before this call. */
   latch_OVP_fault();
   __HAL_GPIO_EXTI_CLEAR_IT(OVP_Pin);
   __DMB();
@@ -531,10 +500,7 @@ bool pwm_clear_OVP_fault(void) {
     if (ch->pwm.op_state == PWM_STATE_UNINITIALIZED) {
       continue;
     }
-    /* Re-latch any channel still holding its own OCP fault; the rest fall
-       back to STOPPED now the OVP flag is clear. That recovery is explicit
-       now that FAULTED is stored rather than derived - nothing else would
-       take these channels back out of it. */
+
     if (ch->pwm.ocp_latched || ocp_is_active(hw) || ocp_is_pending(hw)) {
       latch_OCP_fault(hw);
     } else if (ch->pwm.op_state == PWM_STATE_FAULTED) {
@@ -546,8 +512,6 @@ bool pwm_clear_OVP_fault(void) {
   return true;
 }
 
-/* ISR context: hardware has already forced the outputs off; keep them
-   disabled after the physical fault signal clears. */
 void pwm_OCP_fault(uint32_t channel) {
   latch_OCP_fault(channel_hw(channel));
 }

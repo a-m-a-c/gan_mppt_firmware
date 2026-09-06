@@ -1,18 +1,4 @@
 #!/usr/bin/env python3
-"""The one holder of the serial port, with subscribers fanned out from it.
-
-Only one process can hold the COM port, which is why live_plot.py had to carry
-its own command prompt. A server changes that constraint rather than working
-around it: this process holds the port, and any number of browser tabs, plus a
-Recorder, subscribe to the same decoded stream.
-
-One reader thread decodes with console.StreamParser and calls every subscriber
-with (name, value, t). Subscribers must return quickly - the stream is ~5000
-packets a second and the thread does nothing else.
-
-ReplayLink presents the same surface from a capture CSV, so the whole GUI can
-be exercised without the board. That is how the plotting is verified.
-"""
 
 from __future__ import annotations
 
@@ -26,7 +12,7 @@ import serial
 from serial.tools import list_ports
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-import console  # noqa: E402  - protocol definitions, single source
+import console  # noqa: E402
 
 
 def available_ports() -> list[dict]:
@@ -39,8 +25,6 @@ class LinkError(RuntimeError):
 
 
 class BaseLink:
-    """Subscriber list, clock and lifecycle flags. A source fills in the rest."""
-
     kind = "link"
 
     def __init__(self) -> None:
@@ -72,7 +56,6 @@ class BaseLink:
             fn(name, value, t)
 
     def clock(self) -> float:
-        """Seconds since this connection opened. The recorder's t_host."""
         return time.monotonic() - self._t0
 
     def _start(self, target) -> None:
@@ -89,8 +72,6 @@ class BaseLink:
 
 
 class SerialLink(BaseLink):
-    """Open/close is explicit; the object outlives any one connection."""
-
     kind = "serial"
 
     def __init__(self) -> None:
@@ -115,7 +96,7 @@ class SerialLink(BaseLink):
         self._ser = ser
         self.port = chosen
         self.error = None
-        self._parser = console.StreamParser()   # a new connection starts unaligned
+        self._parser = console.StreamParser()
         self._start(self._read_loop)
         return chosen
 
@@ -132,9 +113,9 @@ class SerialLink(BaseLink):
         ser = self._ser
         while self._running and ser is not None:
             try:
-                # Whatever is buffered, not a fixed count: a fixed read can
-                # never fill at this rate, so it waits out the timeout and
-                # stamps a whole batch with one arrival time.
+                # Read available bytes to avoid timeout batches distorting arrival timestamps.
+
+
                 data = ser.read(max(1, ser.in_waiting))
             except (serial.SerialException, OSError, TypeError) as exc:
                 self.error = str(exc)
@@ -152,8 +133,6 @@ class SerialLink(BaseLink):
         return self._write(console.encode(console.OPCODES[verb]))
 
     def send_raw(self, op: int, payload: bytes = b"") -> bytes:
-        # console.encode refuses a payload over TRANSPORT_MAX_PAYLOAD; serial.c
-        # latches SERIAL_STATE_ERROR on one and that costs a power cycle.
         try:
             frame = console.encode(op, payload)
         except ValueError as exc:
@@ -176,16 +155,9 @@ class SerialLink(BaseLink):
 
 
 class ReplayLink(BaseLink):
-    """A capture CSV played back through the same subscriber path.
-
-    The file's own t_s is the clock, so a replay reproduces the timing the
-    board had. Commands are accepted and discarded: there is nothing to command,
-    but the UI should behave the same either way.
-    """
-
     kind = "replay"
 
-    # The order Src/app/stream.c sends them, so STREAM_LAST still closes a set.
+
     ORDER = ("vbus_mv", "duty", "vin_mv", "iin_ma", "vin_target_mv", "flags")
 
     def __init__(self, path: Path, speed: float = 1.0, loop: bool = False) -> None:

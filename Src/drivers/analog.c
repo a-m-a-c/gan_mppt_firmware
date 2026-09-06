@@ -5,7 +5,6 @@
 #include "main.h"
 #include "system.h"
 
-/* ADC1 runs 16-bit single-ended off a 3V3 reference. */
 #define ANALOG_FULL_SCALE 65535U
 #define ANALOG_VREF_MV    3300U
 #define VBUS_DIV_TOP_OHMS    100000U
@@ -16,8 +15,6 @@
 
 static uint32_t analog_last_sweep_ms;
 
-/* Zero on any failure, which reads as 0 V - out of range for every consumer,
-   so a dead ADC degrades to "no reading" rather than a plausible wrong one. */
 static uint16_t analog_read_raw(void) {
   ADC_ChannelConfTypeDef config = {0};
   uint16_t raw = 0U;
@@ -44,8 +41,6 @@ static uint16_t analog_read_raw(void) {
   return raw;
 }
 
-/* One 64-bit expression so the pin voltage is not truncated to whole
-   millivolts before the divider is undone. */
 static uint32_t raw_to_vbus_mv(uint16_t raw) {
   uint64_t numerator = (uint64_t)raw * ANALOG_VREF_MV *
                        (VBUS_DIV_TOP_OHMS + VBUS_DIV_BOTTOM_OHMS);
@@ -55,7 +50,7 @@ static uint32_t raw_to_vbus_mv(uint16_t raw) {
 }
 
 void analog_init(void) {
-  /* Offset calibration needs the ADC disabled, so it must precede any start. */
+  // Calibration requires ADC disabled; run before the first conversion.
   if (HAL_ADCEx_Calibration_Start(&hadc1, ADC_CALIB_OFFSET, ADC_SINGLE_ENDED) != HAL_OK) {
     Error_Handler();
   }
@@ -66,13 +61,10 @@ void analog_init(void) {
 void analog_service(void) {
   uint32_t now = HAL_GetTick();
 
-  /* Unsigned subtraction, so this stays correct across the 32-bit tick wrap. */
   if ((now - analog_last_sweep_ms) < ANALOG_PERIOD_MS) {
     return;
   }
   analog_last_sweep_ms = now;
 
-  /* Straight into the shared model - sys.vbus_mv is the one place a consumer
-     looks, the same way channel_x.telem is for the INA228 pairs. */
   sys.vbus_mv = raw_to_vbus_mv(analog_read_raw());
 }

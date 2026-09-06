@@ -7,8 +7,7 @@ typedef enum {
   CHECK_FAILED
 } check_result_t;
 
-
 void check_begin(void);
 check_result_t check_service(void);
 
-#endif /* CHECK_H */
+#endif

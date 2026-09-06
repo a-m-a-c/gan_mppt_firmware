@@ -257,9 +257,8 @@ PEP 8.
 - **Explicit per-channel code over arrays and loops.** There are exactly five
   channels, named A–E, and they are named in the code (`channel_a`, `telem_b`).
   Internal lookup tables are fine; the public surface is explicit.
-- One module = one `.c`/`.h` pair with a doxygen banner header carrying
-  `@file`, `@author`, `@brief` and the licence block. Include guards are bare
-  `MODULE_H`.
+- One module = one `.c`/`.h` pair. Preserve licence notices; omit file banners.
+  Include guards are bare `MODULE_H`.
 - **Drivers publish into `sys` and `channel_x` and keep no second copy.** There
   is one home for a number.
 - Public setters are the single path to hardware; `init` composes them rather
@@ -309,16 +308,14 @@ HAL call.
 
 ### Comments
 
-**Keep them short.** The code is self-documenting and the author reads code
-well — a single line or two is usually plenty. Use `//`; reach for `/* */` only
-when a comment genuinely runs long. This is an Agent Instruction in
-[project_agent_instructions.md](project_agent_instructions.md), not a preference.
+Keep almost none (user preference, 2026-09-06). Remove redundant explanations,
+section banners and narrated code. Retain only essential hardware constraints,
+non-obvious ordering or caller requirements, unresolved TODOs, licence notices,
+and tooling markers. Use a short `//` comment where one is needed.
 
-Spend that space on what the code cannot say: the arithmetic behind a number,
-the failure a guard prevents, the constraint a caller must respect, what breaks
-if two calls are reordered. Restating the statement below it is noise.
-
-Do not strip the existing ones.
+Keep detailed derivations in [hardware.md](hardware.md), not long code comments.
+This supersedes the earlier requirement to preserve existing comments and put
+arithmetic beside every number.
 
 ### Non-blocking
 

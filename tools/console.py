@@ -3,23 +3,7 @@
 # requires-python = ">=3.11"
 # dependencies = ["pyserial>=3.5"]
 # ///
-"""Serial console for the GaN MPPT board.
-
-Sends system commands and decodes the telemetry stream.
-
-    uv run tools/console.py            # auto-detect the port
-    uv run tools/console.py --list     # show candidate ports
-    uv run tools/console.py --port COM7
-    uv run tools/console.py --watch    # start with telemetry printing
-
-The two directions do NOT share a frame format. Both are taken from the
-firmware, which is the source of truth:
-
-  host -> board   [op][size][data...][crc]     Src/drivers/serial.c
-  board -> host   [id][size][data...]          Src/app/stream.c
-
-Payloads are little endian.
-"""
+"""Serial console for the GaN MPPT board."""
 
 from __future__ import annotations
 
@@ -31,11 +15,11 @@ import time
 import serial
 from serial.tools import list_ports
 
-BAUD = 921600  # Src/usart.c, huart5.Init.BaudRate
+BAUD = 921600
 
-# --------------------------------------------------------------------------
-# Outgoing: opcodes from serial_opcode_t in Src/app/command.c
-# --------------------------------------------------------------------------
+
+# Opcodes: Src/app/command.c.
+
 OPCODES = {
     "reset": 0x01,
     "clearfault": 0x02,
@@ -46,24 +30,19 @@ OPCODES = {
     "ivsweep": 0x07,
 }
 
-# serial.c latches SERIAL_STATE_ERROR on size > TRANSPORT_MAX_PAYLOAD, which
-# kills the link until the board is power-cycled. Inc/drivers/transport.h.
+
 MAX_PAYLOAD = 8
 
-# The firmware does not check this yet - Src/drivers/serial.c accepts the frame
-# in SERIAL_STATE_DECODE_CRC without looking. 0xCC is what the format comment
-# says the host sends. Swap for a real CRC-8 when the firmware checks one.
+
 CRC_STUB = 0xCC
 
-# --------------------------------------------------------------------------
-# Incoming: ids and widths from Src/app/stream.c
-# --------------------------------------------------------------------------
-# Src/app/stream.c, STREAM_PERIOD_MS. Printing faster than this only repeats
-# values, so it is the floor for `rate`.
+
+# IDs and widths: Src/app/stream.c.
+
+
 STREAM_PERIOD_MS = 1
 
-# id -> (name, width, signed). Width doubles as the resync check, so it has to
-# match the firmware exactly.
+
 STREAM = {
     0x60: ("vbus_mv", 4, False),
     0x61: ("duty", 2, False),
@@ -73,9 +52,9 @@ STREAM = {
     0x65: ("vin_target_mv", 2, False),
 }
 
-# The board sends a set in this order; the first and last are what the host
-# uses to bracket one set. Changing the order in stream.c changes this - a new
-# packet goes BEFORE flags, or every parser here loses its set boundary.
+# stream.c must send vbus_mv first and flags last to delimit each set.
+
+
 STREAM_FIRST = "vbus_mv"
 STREAM_LAST = "flags"
 
@@ -87,13 +66,6 @@ def encode(op: int, payload: bytes = b"") -> bytes:
 
 
 class StreamParser:
-    """Length-prefixed with no delimiter, so alignment has to be earned.
-
-    Connecting mid-stream is the normal case, not an edge case. Every id and
-    its width are known, so an unknown id or a width that disagrees means we
-    are misaligned: drop one byte and try again.
-    """
-
     def __init__(self) -> None:
         self.buf = bytearray()
         self.resyncs = 0
@@ -128,7 +100,7 @@ class Board:
         self.lock = threading.Lock()
         self.running = True
         self.watch = False
-        self.watch_interval = 0.5  # seconds between watch lines
+        self.watch_interval = 0.5
         self._last_print = 0.0
         self.reader = threading.Thread(target=self._read_loop, daemon=True)
         self.reader.start()

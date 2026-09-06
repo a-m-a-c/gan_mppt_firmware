@@ -1,15 +1,5 @@
-/* Browser side of the bench GUI.
- *
- * Every panel, trace, readout and command button is built from the schema the
- * server sends on connect. Nothing below names a telemetry field, so a new id
- * in Src/app/stream.c reaches the screen through console.STREAM and
- * tools/gui/schema.py alone.
- */
-
 const $ = (id) => document.getElementById(id);
 
-/* Which panes a tab shows. A new view is an entry here plus a `main.view-<id>`
- * rule in style.css. */
 const VIEWS = [
   { id: 'all', label: 'Overview' },
   { id: 'iv', label: 'V–I plane' },
@@ -20,7 +10,7 @@ const PREFS_KEY = 'gan-mppt-bench';
 
 const state = {
   schema: null,
-  panels: [],       // {id, label, colour, div, chart, hidden}
+  panels: [],
   iv: null,
   ivChannel: null,
   ivPair: null,
@@ -35,9 +25,6 @@ const state = {
   historyAt: 0,
 };
 
-/* ---- preferences ------------------------------------------------------ */
-/* Which view, which panels, and the V-I settings survive a reload. A bench
- * tool that forgets how it was set up every refresh is a tool you fight. */
 let prefs = {};
 
 function loadPrefs() {
@@ -59,7 +46,7 @@ function savePrefs() {
   }
   try {
     localStorage.setItem(PREFS_KEY, JSON.stringify(prefs));
-  } catch (err) { /* private window, or storage disabled; not worth reporting */ }
+  } catch (err) {   }
 }
 
 function applyPrefsToInputs() {
@@ -71,7 +58,6 @@ function applyPrefsToInputs() {
   }
 }
 
-/* ---- websocket -------------------------------------------------------- */
 let socket = null;
 
 function openSocket() {
@@ -95,7 +81,6 @@ function onMessage(msg) {
   else if (msg.type === 'reset') clearAll();
 }
 
-/* ---- views ------------------------------------------------------------ */
 function buildTabs() {
   const nav = $('tabs');
   nav.innerHTML = '';
@@ -118,7 +103,6 @@ function setView(id) {
   savePrefs();
 }
 
-/* ---- schema -> UI ----------------------------------------------------- */
 function buildFromSchema(schema) {
   state.schema = schema;
   state.fields = new Map(schema.fields.map((f) => [f.key, f]));
@@ -312,13 +296,11 @@ function buildSequences(sequences) {
   }
 }
 
-/* ---- live data -------------------------------------------------------- */
 function onData(msg) {
   state.now = msg.now;
   state.wall = performance.now();
   if (msg.ts.length) {
-    // Hidden panels are fed too: a panel turned back on should show the window
-    // it would have had, not start from the moment it reappeared.
+
     for (const panel of state.panels) panel.chart.push(msg.ts, msg.series);
   }
   const points = msg.iv[state.ivChannel];
@@ -367,9 +349,6 @@ function setPill(kind, text) {
   pill.textContent = text;
 }
 
-/* Rebuilt only when the run changes shape; the progress bar moves every frame,
- * and re-writing innerHTML at 60 Hz would kill the cancel button under the
- * cursor every time it was about to be clicked. */
 let runSignature = '';
 
 function renderRunState() {
@@ -415,7 +394,6 @@ function updateRunProgress(run) {
     (run.state === 'running' ? ` ${elapsed.toFixed(1)}/${run.length}s` : '');
 }
 
-/* ---- captures --------------------------------------------------------- */
 function fileLinks(files) {
   return Object.entries(files).map(([kind, name]) =>
     (name.endsWith('.svg')
@@ -457,7 +435,6 @@ function showPlot(name) {
   $('viewer').classList.remove('hidden');
 }
 
-/* ---- log -------------------------------------------------------------- */
 function logLine(entry) {
   const holder = $('log');
   const atBottom = holder.scrollHeight - holder.scrollTop - holder.clientHeight < 30;
@@ -475,7 +452,6 @@ function localLog(text, level = 'info') {
   logLine({ t: state.now, level, text });
 }
 
-/* ---- commands --------------------------------------------------------- */
 const LOCAL_HELP = [
   'verbs come from console.OPCODES; anything else here is local:',
   '  raw <op-hex> [byte-hex ...]   send an arbitrary frame',
@@ -529,7 +505,6 @@ function runCommand(line) {
   }
 }
 
-/* ---- connection ------------------------------------------------------- */
 async function refreshPorts() {
   const { ports, suggested } = await (await fetch('/api/ports')).json();
   const select = $('port');
@@ -571,7 +546,6 @@ function clearAll() {
   state.now = 0;
 }
 
-/* ---- controls --------------------------------------------------------- */
 function applyIvControls() {
   const iv = state.iv;
   if (!iv) return;
@@ -594,10 +568,8 @@ function applyWindow() {
   savePrefs();
 }
 
-/* ---- boot ------------------------------------------------------------- */
 function tick() {
-  // The board's clock only advances when a batch arrives; interpolating off
-  // the wall clock between batches is what keeps the fade smooth at 60 fps.
+
   const now = state.connected
     ? state.now + (performance.now() - state.wall) / 1000
     : state.now;

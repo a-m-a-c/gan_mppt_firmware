@@ -1,4 +1,3 @@
-// Contains setup and loop phases, called in main.c in init and loop.
 #include <stdbool.h>
 #include <stdint.h>
 
@@ -19,7 +18,7 @@
 #include "stream.h"
 #include "serial.h"
 
-volatile bool error_flag = false; // Global error flag, set to true when something I did not expect occurs.
+volatile bool error_flag = false;
 
 void app_setup(void) {
   channel_init_all();
@@ -57,30 +56,23 @@ static void app_fault_service(void) {
 }
 
 void app_loop(void) {
-  /* Always on Services*/
-  serial_service(); // Check for new serial commands.
-  command_service(); // Collect commands.
-  if (system_command_received(SYSTEM_COMMAND_RESET)) sys.state = SYSTEM_STATE_RESET; // Check for reset
+  serial_service();
+  command_service();
+  if (system_command_received(SYSTEM_COMMAND_RESET)) sys.state = SYSTEM_STATE_RESET;
   app_fault_service();
 
-  const bool entered = (sys.state != prev_state); // Check for state transition
+  const bool entered = (sys.state != prev_state);
   prev_state = sys.state;
 
   switch (sys.state) {
-
-    /* ------------------------------- INIT STATE -------------------------------*/
     case SYSTEM_STATE_INIT: {
-      /* ONGOING BEHAVIOUR */
       sys.state = SYSTEM_STATE_CHECK;
       break;
     }
 
-    /* ------------------------------- CHECK STATE -------------------------------*/
     case SYSTEM_STATE_CHECK: {
-      /* ENTRY BEHAVIOUR */
       if (entered) check_begin();
 
-      /* ONGOING BEHAVIOUR */
       check_result_t result = check_service();
 
       switch (result) {
@@ -92,25 +84,20 @@ void app_loop(void) {
         case CHECK_PASSED:
           sys.state = SYSTEM_STATE_STANDBY;
           break;
-      }      
+      }
       break;
     }
-  
-    /* ------------------------------- STANDBY STATE -------------------------------*/
+
     case SYSTEM_STATE_STANDBY: {
-      /* ENTRY BEHAVIOUR */
       if (entered) pwm_stop_all();
 
-      /* ONGOING BEHAVIOUR */
       sys.mode = system_command_requested_mode();
 
       if (sys.mode != MODE_NONE) sys.state = SYSTEM_STATE_ACTIVE;
       break;
     }
 
-    /* ------------------------------- ACTIVE STATE -------------------------------*/
     case SYSTEM_STATE_ACTIVE: {
-      /* ENTRY BEHAVIOUR */
       if (entered) {
         mode_request_result_t init_result = mode_begin(sys.mode);
         switch (init_result) {
@@ -127,7 +114,6 @@ void app_loop(void) {
       }
       if (sys.state != SYSTEM_STATE_ACTIVE) break;
 
-      /* ONGOING BEHAVIOUR */
       const bool stop_request = system_command_received(SYSTEM_COMMAND_STOP);
       mode_state_t state = mode_service(stop_request);
 
@@ -145,35 +131,28 @@ void app_loop(void) {
       break;
     }
 
-    /* ------------------------------- FAULTED STATE -------------------------------*/  
     case SYSTEM_STATE_FAULTED: {
-      /* ONGOING BEHAVIOUR */
-      // A newly entered fault cannot be acknowledged by an earlier command.
-      if (entered || !system_command_received(SYSTEM_COMMAND_CLEAR_FAULT)) break;
-      if (pwm_clear_faults()) {
+      if (system_command_received(SYSTEM_COMMAND_CLEAR_FAULT) && pwm_clear_faults()) {
         sys.state = SYSTEM_STATE_CHECK;
       }
       break;
     }
-    
-    /* ------------------------------- RESET STATE -------------------------------*/
+
     case SYSTEM_STATE_RESET: {
-      /* ENTRY BEHAVIOUR */
       if (entered) {
         pwm_stop_all();
-        HAL_NVIC_SystemReset(); // Reset the MCU.
+        HAL_NVIC_SystemReset();
       }
-      error_flag = true; // Should never get here, but if we do, set the error flag.
+      error_flag = true;
       break;
     }
   }
 
-  app_fault_service(); // Also catches faults raised during mode start/service.
+  app_fault_service();
 
-  /* Always on Services*/
   analog_service();
   status_service();
   stream_service();
   telem_service();
-  command_flush_all(); // Flush commands.
+  command_flush_all();
 }

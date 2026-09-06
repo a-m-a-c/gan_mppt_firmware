@@ -52,7 +52,3 @@ and serial second, so the drain order is the rule - do not reorder it.
 Same command path as serial, via `can_take_next_system_command()`.
 FDCAN bit timing in `fdcan.c` is still at CubeMX defaults (TimeSeg1 and
 TimeSeg2 both 1), so the bitrate is not a real number yet.
-
-## 017 - Complete perturb_observe.c
-Same format as pi.c. Settle the header interface first, then fill the
-functions.

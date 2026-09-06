@@ -6,7 +6,7 @@
 #include "main.h"
 #include "serial.h"
 
-#define NUM_COMMAND_SLOTS 8 // Number of slots in system_commands_t
+#define NUM_COMMAND_SLOTS 8
 
 typedef enum {
   OP_SYSTEM_COMMAND_NONE = 0x00,
@@ -52,28 +52,24 @@ static void accept_serial_command(transport_frame_t *frame) {
       pending_mode = MODE_SINGLE_CH_IV_SWEEP;
       break;
     default:
-      // Unknown command, ignore
+
       break;
   }
 }
 
-// Run at start, may have additional logic later.
 void command_init(void) {
   command_flush_all();
 }
 
-// Checks for the most recent run command received.
 mode_t system_command_requested_mode(void) {
     return pending_mode;
 }
 
-// Checks if a command has been received. Does not clear.
 bool system_command_received(system_commands_t command) {
     if (command >= NUM_COMMAND_SLOTS) return false;
     return system_command_received_register[command];
 }
 
-// Checks drivers for new commands. Serial takes priority. Can later.
 void command_service(void) {
   transport_frame_t frame;
   while (serial_take_next_frame(&frame)) {
@@ -81,7 +77,6 @@ void command_service(void) {
   }
 }
 
-// Clear all commands. Reset state.
 void command_flush_all(void) {
   pending_mode = MODE_NONE;
   for (int i = 0; i < NUM_COMMAND_SLOTS; i++) {

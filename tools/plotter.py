@@ -3,21 +3,7 @@
 # requires-python = ">=3.11"
 # dependencies = ["pyserial>=3.5", "matplotlib>=3.8"]
 # ///
-"""Scripted bench run from a terminal: drive the board and plot the result.
-
-    uv run tools/plotter.py --mode cv --start 2 --end 5 --length 8
-    uv run tools/plotter.py --mode ivsweep --start 2 --end 30 --length 32
-    uv run tools/plotter.py --sequence ivsweep       # a predefined run
-    uv run tools/plotter.py --list                   # what is predefined
-
-Captures telemetry for --length seconds, sending the mode command at --start
-and STOP at --end. Writes a timestamped CSV and SVG into captures/, with the
-command instants marked; --mode ivsweep also writes the I-V curve.
-
-This is the headless twin of the browser GUI: both drive tools/gui/capture.py,
-so a change to the capture path or the CSV layout reaches both. The GUI is
-`uv run tools/gui/server.py`.
-"""
+"""Scripted bench run from a terminal: drive the board and plot the result."""
 
 from __future__ import annotations
 

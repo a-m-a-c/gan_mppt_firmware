@@ -7,8 +7,7 @@
 #include "channel.h"
 #include "config.h"
 
-#define PWM_DUTY_SCALE 1000U // 1000 is 100%
-
+#define PWM_DUTY_SCALE 1000U
 
 void pwm_init(uint32_t channel);
 
@@ -19,9 +18,9 @@ void pwm_set_frequency(uint32_t channel, uint32_t frequency);
 bool pwm_start(uint32_t channel);
 void pwm_stop(uint32_t channel);
 void pwm_stop_all(void);
-// Main-loop fault query: live inputs, pending flags, and software latches.
+
 bool pwm_faults_present(void);
-// Stops every channel; succeeds only when all OVP/OCP faults are clear.
+
 bool pwm_clear_faults(void);
 bool pwm_clear_OCP_fault(uint32_t channel);
 bool pwm_clear_OVP_fault(void);
@@ -29,6 +28,4 @@ bool pwm_clear_OVP_fault(void);
 void pwm_OCP_fault(uint32_t channel);
 void pwm_OVP_fault(void);
 
-
-
-#endif /* PWM_H */
+#endif

@@ -6,24 +6,21 @@
 #include "pi.h"
 #include <stdint.h>
 
-// Do not run with a battery, I reckon it would skitz out.
+// Bench mode: do not run into a battery.
 
-// Mode parameters
 #define VOUT_MV 25000
 #define KP 0.006f
 #define KI 0.6f
 #define SAMPLE_TIME_MS 1
 #define DT_MAX_MS (2U * SAMPLE_TIME_MS)
 #define MAX_DUTY_CYCLE 750
-#define MIN_DUTY_CYCLE 0 
+#define MIN_DUTY_CYCLE 0
 #define DUTY_SLEW_PER_STEP 15U
 
 static uint32_t last_sample_ms;
 static pi_t volt_pi;
 
-// Called at start of mode, before first service pass.
 mode_request_result_t mode_single_ch_cv_begin(void) {
-  // Checks
   if (channel_a.telem.valid == false) return MODE_INIT_REFUSED;
   if (channel_a.telem.iin_a > 1.0) return MODE_INIT_REFUSED;
 
@@ -33,7 +30,6 @@ mode_request_result_t mode_single_ch_cv_begin(void) {
   return MODE_INIT_OK;
 }
 
-// Called repeatedly while mode is active.
 mode_state_t mode_single_ch_cv_service(bool stopping) {
   const uint32_t now = HAL_GetTick();
 
@@ -71,7 +67,7 @@ mode_state_t mode_single_ch_cv_service(bool stopping) {
     }
 
     (void)pwm_set_duty_cycle(CHANNEL_A, duty);
-    pi_track(&volt_pi, (float)channel_a.pwm.duty_applied); // reseed past the slew limiter
+    pi_track(&volt_pi, (float)channel_a.pwm.duty_applied);
   }
 
   return MODE_STATE_RUNNING;

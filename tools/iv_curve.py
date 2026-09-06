@@ -3,21 +3,7 @@
 # requires-python = ">=3.11"
 # dependencies = ["matplotlib>=3.8"]
 # ///
-"""Draw an I-V curve from a stream_plot.csv capture.
-
-A back-and-forth capture (mode_single_ch_iv_sweep.c runs SWEEP_CYCLES of
-0 -> MAX -> 0) is drawn one line per pass, up-sweeps and down-sweeps in
-different colours, so hysteresis and cycle-to-cycle drift are visible.
-
-    uv run tools/iv_curve.py                          # stream_plot.csv -> stream_iv.svg
-    uv run tools/iv_curve.py somewhere/run.csv --out run_iv.svg
-    uv run tools/iv_curve.py --rload 2.5              # add stage efficiency
-    uv run tools/iv_curve.py --all                    # do not trim to the sweep
-
-Offline only - it reads a CSV that tools/plotter.py already wrote, so a capture
-can be replotted without the board. plotter.py calls render() directly for the
-same reason console.py owns the protocol: one implementation, one place to fix.
-"""
+"""Draw an I-V curve from a stream_plot.csv capture."""
 
 from __future__ import annotations
 
@@ -57,13 +43,6 @@ def read_rows(path: Path) -> list[dict]:
 
 
 def trim_to_sweep(rows: list[dict]) -> list[dict]:
-    """Keep only the rows between the mode command and the stop.
-
-    The event column marks the single row each command landed on, so the
-    boundaries are already in the file. Without this the flat run-up before the
-    command and the tail after it both arrive at duty 0 and sit on the curve as
-    a spurious point.
-    """
     start, end = 0, len(rows)
     for n, row in enumerate(rows):
         event = row["event"]
@@ -76,30 +55,6 @@ def trim_to_sweep(rows: list[dict]) -> list[dict]:
 
 
 def settled_samples(rows: list[dict]) -> list[tuple[int, float, float, float]]:
-    """One (duty, V, I, Vbus) per contiguous visit to a duty value, in order.
-
-    Telemetry commits at 25 Hz (TELEM_SWEEP_PERIOD_MS) against the 1 kHz
-    stream, so ~40 consecutive rows repeat one sample. Identical consecutive
-    (vin, iin) pairs are therefore the same measurement, not new data. The last
-    distinct one seen while a duty was held is the settled one - the earlier
-    ones were taken while the source was still recovering from the step.
-
-    Per *visit*, not per duty value: mode_single_ch_iv_sweep.c runs
-    SWEEP_CYCLES cycles of 0 -> MAX -> 0, so every duty is visited 2N times and
-    keying on duty alone would keep only the last one.
-
-    Rows with flags bit 0 clear are dropped: channel_telem.c had not completed
-    all four reads, so vin and iin are whatever the last good sweep left. Rows
-    with bit 1 clear are dropped too - the channel was not switching, so the
-    reading is not a point on the curve. Captures taken before pwm_stop() zeroed
-    the duty (2026-08-30) land those idle rows on whatever duty the mode ended
-    at, replacing a real curve point; since then they land on 0, which is the
-    pass-through point and just as wrong.
-
-    Captures made before bit 1 existed carry it clear on every row; that reads
-    as "no row was switching", so the filter is skipped rather than emptying the
-    curve. Their final duty step keeps the artifact.
-    """
     running_known = any((row.get("flags") or 0) & 0x02 for row in rows)
 
     out: list[tuple[int, float, float, float]] = []
@@ -128,13 +83,6 @@ def settled_samples(rows: list[dict]) -> list[tuple[int, float, float, float]]:
 
 
 def split_passes(samples: list[tuple]) -> list[list[tuple]]:
-    """Split at each reversal of duty direction.
-
-    The passes have to stay separate: merging them would average away exactly
-    the hysteresis a back-and-forth sweep exists to show. The turning point is
-    repeated into both neighbours so consecutive traces meet rather than leaving
-    a gap.
-    """
     if len(samples) < 2:
         return [samples] if samples else []
     passes: list[list[tuple]] = []
@@ -161,8 +109,6 @@ def ascending(one_pass: list[tuple]) -> bool:
 
 
 def pass_style(index: int, total: int, up: bool) -> dict:
-    """Direction picks the colour, cycle picks the opacity, so a drifting source
-    reads as a fan of traces rather than one smeared band."""
     return {"color": UP_C if up else DOWN_C,
             "alpha": 0.35 + 0.65 * (index / max(total - 1, 1))}
 
@@ -174,7 +120,7 @@ def direction_legend():
 
 def render(csv_path: Path, svg_path: Path, rload: float | None = None,
            trim: bool = True, title: str | None = None) -> tuple | None:
-    """Writes the curve. Returns (duty, V, I, P) at the maximum, or None."""
+
     rows = read_rows(csv_path)
     if trim:
         rows = trim_to_sweep(rows)
@@ -197,9 +143,7 @@ def render(csv_path: Path, svg_path: Path, rload: float | None = None,
              else f"{len(samples)} duty steps")
     fig.suptitle(title or f"channel A input V-I - {csv_path.name}, {shape}")
 
-    # V on y against I on x, so each trace is vin(iin). One line per pass: the
-    # sweep visits every duty twice per cycle and the two traversals are the
-    # measurement, not noise to be averaged out.
+
     for n, one in enumerate(passes):
         ax_iv.plot([q[2] for q in one], [q[1] for q in one], "-o", ms=2.5, lw=1.0,
                    **pass_style(n, len(passes), ascending(one)))
@@ -210,9 +154,7 @@ def render(csv_path: Path, svg_path: Path, rload: float | None = None,
     ax_iv.set_ylim(bottom=0)
     ax_iv.grid(alpha=0.3)
 
-    # The star sits on the V-I trace, not on a power twin: power against current
-    # is a near-straight line through the CV region and only crossed the curve
-    # without adding to it. Power belongs on the duty axis at right.
+
     ax_iv.plot(i[mpp], v[mpp], "*", ms=16, color=PIN_C, zorder=5)
     ax_iv.annotate(f"{v[mpp]:.2f} V, {i[mpp]:.2f} A, {pin[mpp]:.1f} W @ D={duty[mpp]}",
                    xy=(i[mpp], v[mpp]), xytext=(-10, -14), textcoords="offset points",
@@ -221,16 +163,16 @@ def render(csv_path: Path, svg_path: Path, rload: float | None = None,
         ax_iv.legend(handles=direction_legend(), loc="lower left", fontsize=8)
 
     if many:
-        # Power against the sweep's own axis, one line per pass. If the peak duty
-        # walks across cycles the source is drifting, not the converter changing.
+
+
         for n, one in enumerate(passes):
             ax_d.plot([q[0] for q in one], [q[1] * q[2] for q in one], "-", lw=1.0,
                       **pass_style(n, len(passes), ascending(one)))
         ax_d.set_ylabel("pin (W)")
         ax_d.legend(handles=direction_legend(), loc="upper left", fontsize=8)
     else:
-        # A single pass has room for all three against duty: the sweep's own
-        # axis, and where a step that failed to move the operating point shows.
+
+
         ax_d.plot(duty, v, "-o", ms=3, lw=1.0, color=UP_C, label="vin (V)")
         ax_d.plot(duty, i, "-o", ms=3, lw=1.0, color=IIN_C, label="iin (A)")
         ax_d.plot(duty, pin, "-o", ms=3, lw=1.0, color=PIN_C, label="pin (W)")
@@ -240,15 +182,14 @@ def render(csv_path: Path, svg_path: Path, rload: float | None = None,
     ax_d.grid(alpha=0.3)
 
     if rload:
-        # Below ~0.5 W in, the ratio is all noise.
+
         eff = [(s[0], 100.0 * (s[3] ** 2 / rload) / (s[1] * s[2]))
                for s in samples if s[1] * s[2] > 0.5]
         if eff:
             peak = max(e[1] for e in eff)
             if peak > 100.0:
-                # Pout > Pin is not a measurement, it is a wrong fixture: vbus is
-                # the battery bus, so this only means what --rload claims if that
-                # resistor is the only thing on it.
+
+
                 print(f"  --rload {rload:g} gives {peak:.0f} % efficiency, which is"
                       f" impossible - vbus is not across a {rload:g} ohm load."
                       f" Dropping the efficiency trace.")

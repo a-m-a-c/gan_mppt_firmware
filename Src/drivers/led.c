@@ -3,7 +3,6 @@
 #include "config.h"
 #include "main.h"
 
-
 void led_set_channel_a(bool on) {
   HAL_GPIO_WritePin(LED_TOG_1_GPIO_Port, LED_TOG_1_Pin, (GPIO_PinState)!on);
 }
@@ -67,5 +66,3 @@ void led_channel_flash_service(void) {
     cur_time = HAL_GetTick();
   }
 }
-
-

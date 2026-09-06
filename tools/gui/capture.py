@@ -1,14 +1,4 @@
 #!/usr/bin/env python3
-"""Bench capture: assemble the stream into rows, write the CSV and the plots.
-
-Shared by tools/plotter.py (headless CLI) and tools/gui/server.py (browser), so
-the capture path has one implementation. The CSV column layout is part of the
-contract with tools/iv_curve.py - changing it breaks replotting old files.
-
-A Recorder is a sink, not a port owner: the caller feeds it decoded packets
-from whatever SerialLink it already holds. Only one process can hold the COM
-port, so a recorder has to be able to share the one that exists.
-"""
 
 from __future__ import annotations
 
@@ -20,31 +10,24 @@ from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-import console   # noqa: E402  - protocol definitions, single source
-import iv_curve  # noqa: E402  - the I-V curve, drawn from the CSV
+import console   # noqa: E402
+import iv_curve  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CAPTURE_DIR = REPO_ROOT / "captures"
 
-# Row layout, in wire order. Indices into Recorder.rows.
+
 T, T_HOST, VBUS_MV, VIN_MV, IIN_MA, DUTY, FLAGS = range(7)
 CSV_HEADER = ["t_s", "t_host_s", "vbus_mv", "vin_mv", "iin_ma", "duty", "flags", "event"]
 
 
 class Recorder:
-    """Accumulates completed telemetry sets into rows.
-
-    A set is bracketed by console.STREAM_FIRST and STREAM_LAST. A set that did
-    not deliver every packet is counted but still written, matching what the
-    CSV has always carried; iv_curve.py drops those rows on the flags column.
-    """
-
     def __init__(self) -> None:
         self.rows: list[tuple] = []
         self.events: list[tuple[float, str]] = []
         self.latest: dict[str, int] = {}
-        self.ticks = -1   # sets seen; the board emits one every STREAM_PERIOD_MS
-        self.partial = 0  # sets that did not deliver every packet
+        self.ticks = -1
+        self.partial = 0
         self.complete = True
         self.recording = True
         self.lock = threading.Lock()
@@ -93,16 +76,8 @@ class Recorder:
                 w.writerow([f"{row[T]:.4f}", f"{row[T_HOST]:.4f}", *row[VBUS_MV:], label])
 
 
-# --------------------------------------------------------------------------
-# Sequences: a scripted bench run, defined as data.
-# --------------------------------------------------------------------------
 @dataclass(frozen=True)
 class Sequence:
-    """One scripted bench run. Adding a routine is a table entry, not code.
-
-    steps are (seconds from the start of the run, verb); verbs are
-    console.OPCODES keys. renders names the plots written when it finishes.
-    """
     name: str
     label: str
     steps: tuple[tuple[float, str], ...]
@@ -166,7 +141,6 @@ for _seq in SEQUENCES:
 
 
 def capture_paths(name: str, when: datetime | None = None) -> dict[str, Path]:
-    """Timestamped output set, so one run never overwrites the last."""
     stamp = (when or datetime.now()).strftime("%Y%m%d-%H%M%S")
     stem = CAPTURE_DIR / f"{stamp}_{name}"
     return {"csv": Path(f"{stem}.csv"),
@@ -175,19 +149,12 @@ def capture_paths(name: str, when: datetime | None = None) -> dict[str, Path]:
 
 
 class SequenceRun:
-    """Drives a Sequence's steps against a send callable, on its own thread.
-
-    Sleeps on an Event rather than time.sleep so cancel() lands promptly: a
-    32 s sweep that cannot be stopped early keeps the board switching for all
-    of it, which is the one thing a bench operator needs to be able to undo.
-    """
-
     def __init__(self, seq: Sequence, send, recorder: Recorder, clock,
                  on_event=None) -> None:
         self.seq = seq
         self.send = send
         self.recorder = recorder
-        self.clock = clock          # () -> seconds since the link opened
+        self.clock = clock
         self.on_event = on_event or (lambda *a: None)
         self.t0 = clock()
         self.cancelled = threading.Event()
@@ -204,7 +171,6 @@ class SequenceRun:
         return self.clock() - self.t0
 
     def _wait_until(self, offset: float) -> bool:
-        """True if the wait completed, False if it was cancelled."""
         remaining = offset - self.elapsed
         if remaining > 0:
             return not self.cancelled.wait(remaining)
@@ -213,8 +179,8 @@ class SequenceRun:
     def _run(self) -> None:
         stopped = False
         try:
-            # length ends the *recording*, not the run: a step may fall after
-            # it, and cutting the run short there would skip the stop command.
+            # Finish the sequence even after recording ends, so STOP is still sent.
+
             timeline = sorted([*self.seq.steps, (self.seq.length, None)],
                               key=lambda step: step[0])
             for when, verb in timeline:
@@ -227,12 +193,12 @@ class SequenceRun:
                 self.recorder.mark(self.clock(), verb)
                 stopped = stopped or verb == "stop"
                 self.on_event("step", verb)
-        except Exception as exc:                 # noqa: BLE001 - surfaced in the UI
+        except Exception as exc:                 # noqa: BLE001
             self.error = str(exc)
         finally:
             self.recorder.stop()
-            # Cancelling mid-run leaves the board switching. Stopping it is the
-            # whole point of the cancel, so it is sent even on the error path.
+
+
             if not stopped:
                 try:
                     self.send("stop")
@@ -250,7 +216,7 @@ class SequenceRun:
 
 def render(seq: Sequence, recorder: Recorder, paths: dict[str, Path],
            rload: float | None = None) -> tuple[list[str], dict[str, Path]]:
-    """Write every output the sequence asks for. Returns (summary, files written)."""
+
     recorder.write_csv(paths["csv"])
     written = {"csv": paths["csv"]}
     lines = summarise(recorder)
@@ -288,8 +254,7 @@ def summarise(recorder: Recorder) -> list[str]:
     span(VBUS_MV, 1000.0, "V", "vbus")
     span(DUTY, 1.0, " ", "duty", "6.0f")
 
-    # t_s is reconstructed from the set count, so cross-check it against the
-    # wall clock. Drift means sets were lost, not merely delayed.
+
     if len(rows) > 1:
         board, host = rows[-1][T] - rows[0][T], rows[-1][T_HOST] - rows[0][T_HOST]
         if host > 0 and abs(board - host) > 0.05 * host:
@@ -299,8 +264,6 @@ def summarise(recorder: Recorder) -> list[str]:
 
 
 def render_timeseries(recorder: Recorder, path: Path, seq: Sequence) -> None:
-    # Imported here, not at module scope: the GUI does not need matplotlib
-    # until a sequence finishes, and importing it costs about a second.
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -337,7 +300,7 @@ def render_timeseries(recorder: Recorder, path: Path, seq: Sequence) -> None:
     colours = {"stop": "#333333"}
     for when, verb in recorder.events:
         if not (plot_start <= when <= length):
-            continue  # outside the plotted window; summarise() reports it
+            continue
         colour = colours.get(verb, "#2ca02c")
         for ax in axes:
             ax.axvline(when, color=colour, ls="--", lw=1.0)
@@ -355,7 +318,6 @@ def render_timeseries(recorder: Recorder, path: Path, seq: Sequence) -> None:
 
 
 def list_captures(limit: int = 40) -> list[dict]:
-    """Past runs, newest first. The GUI's history list."""
     if not CAPTURE_DIR.is_dir():
         return []
     out = []

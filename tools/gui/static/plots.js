@@ -1,19 +1,8 @@
-/* Two canvas plots, no dependencies.
- *
- * StripChart  - time series, one panel, any number of traces.
- * PhasePlot   - the V-I plane, points fading over a persistence window.
- *
- * Both are told what to draw; neither knows a field name. The schema the
- * server sends decides how many of each exist and what goes in them.
- */
-
 const AXIS = '#69737f';
 const GRID = 'rgba(23, 27, 33, 0.085)';
 const FRAME = '#c3cad2';
 const TEXT = '#171b21';
 
-/* Left and bottom rules. Gridlines alone leave a plot floating on the page;
- * the frame is what makes it read as an axis. */
 function drawFrame(ctx, x0, y0, x1, y1) {
   ctx.strokeStyle = FRAME;
   ctx.lineWidth = 1;
@@ -53,7 +42,6 @@ class Canvas2D {
     this.observer.observe(canvas);
   }
 
-  /* Rebuilt plots share a canvas, so the old observer has to let go of it. */
   destroy() {
     this.observer.disconnect();
   }
@@ -73,9 +61,8 @@ class Canvas2D {
   }
 }
 
-/* ------------------------------------------------------------------ */
 class StripChart extends Canvas2D {
-  /* traces: [{key, label, colour, scale, step, unit}] */
+
   constructor(canvas, opts) {
     super(canvas);
     this.title = opts.title || '';
@@ -102,8 +89,7 @@ class StripChart extends Canvas2D {
     let drop = 0;
     while (drop < this.t.length && this.t[drop] < cutoff) drop++;
     if (!drop) return;
-    // One splice, not shift() per sample: the arrays are scanned once a frame
-    // either way, and leaving stale samples in makes every later scan longer.
+
     this.t.splice(0, drop);
     for (const list of this.values.values()) list.splice(0, drop);
   }
@@ -213,11 +199,8 @@ class StripChart extends Canvas2D {
   }
 }
 
-/* ------------------------------------------------------------------ */
 class PhasePlot extends Canvas2D {
-  /* The V-I plane. Each sample is a point that fades out over `persist`
-   * seconds, so an MPPT run draws its own search: a spiral onto the knee, or a
-   * limit cycle hunting around it. */
+
   constructor(canvas, opts) {
     super(canvas);
     this.xLabel = opts.xLabel;
@@ -322,8 +305,6 @@ class PhasePlot extends Canvas2D {
       return;
     }
 
-    // Fade to a floor rather than to zero: the oldest points are the shape of
-    // the curve and should stay legible while the newest are obviously live.
     const base = this.colour;
     for (const p of live) {
       const age = (now - p.t) / this.persist;
@@ -361,9 +342,7 @@ class PhasePlot extends Canvas2D {
       let best = live[0];
       for (const p of live) if (p.p > best.p) best = p;
       if (this.showIso && best.p > 0) {
-        // Constant-power hyperbola through the best point: y = P/x. Anything
-        // above this line is a better operating point than has been found,
-        // which is the whole question an MPPT run is asking.
+
         ctx.strokeStyle = '#2ca02c';
         ctx.globalAlpha = 0.55;
         ctx.setLineDash([4, 4]);

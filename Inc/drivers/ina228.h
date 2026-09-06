@@ -5,16 +5,14 @@
 #include <stdint.h>
 #include "stm32h7xx_hal.h"
 
-// An ina228 device.
 typedef struct
 {
   I2C_HandleTypeDef *i2c;
-  uint8_t address;     /* 7-bit address, 0x40-0x4F via the A0/A1 straps */
+  uint8_t address;     // 7-bit I2C address.
   float shunt_ohms;
-  float max_current_a; /* full-scale current mapped onto the 20-bit CURRENT register */
-  float current_lsb;   /* amps per CURRENT bit - derived by ina228_init() */
+  float max_current_a;
+  float current_lsb;
 } ina228_t;
-
 
 typedef enum
 {
@@ -26,8 +24,5 @@ uint8_t ina228_register(ina228_quantity_t quantity);
 uint16_t ina228_register_size(ina228_quantity_t quantity);
 float ina228_decode(const ina228_t *dev, ina228_quantity_t quantity, const uint8_t *raw);
 
-/* Blocking. Verifies the part answers, resets it, and writes SHUNT_CAL and
-   ADC_CONFIG. The only blocking call left - every reading is taken by the
-   interrupt-driven sweep in channel_telem.c using the three functions above. */
 bool ina228_init(ina228_t *dev);
-#endif /* INA228_H */
+#endif

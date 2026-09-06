@@ -2,26 +2,15 @@
 #include "usart.h"
 #include <stdint.h>
 #include <stdbool.h>
-#define UART_IRQ_PRIORITY 4U // Priority for UART interrupts
-#define FRAME_QUEUE_SIZE 16U // Must be a power of two
-#define UART_RX_BUFFER_SIZE 128U // Must be a power of two
-/*
-Uart Command Structure (incoming):
-[op][size][data][crc]
-op: 1 byte, operation code (command)
-size: 1 byte, size of the data field (0-255)
-data: variable length, size specified by the size field
-crc: 1 byte, CRC8 checksum of the entire command, stubbed as 0xCC by host.
-*/
-
-// System commands
-// [op][size = 0][crc = 0xCC]
+#define UART_IRQ_PRIORITY 4U
+#define FRAME_QUEUE_SIZE 16U // Must be a power of two.
+#define UART_RX_BUFFER_SIZE 128U // Must be a power of two.
 
 static volatile uint8_t uart_rx_buffer[UART_RX_BUFFER_SIZE];
 static volatile uint16_t rx_head = 0;
 static volatile uint16_t rx_tail = 0;
 static volatile uint16_t rx_dropped = 0;
-/* -------------------------------------------------------------- STATIC -------------------------------------------------------------- */
+
 static void rx_buffer_push(uint8_t byte) {
   const uint16_t next = (rx_head + 1U) & (UART_RX_BUFFER_SIZE - 1U);
   if (next == rx_tail) {
@@ -78,12 +67,9 @@ static serial_state_t serial_state;
 static transport_frame_t current_frame;
 static uint8_t data_index = 0;
 
+// HAL retains this buffer until the receive interrupt completes.
 
-// The HAL keeps this pointer and writes through it from the ISR, so it needs
-// static storage duration - never a local.
 static uint8_t uart_rx_byte;
-
-/* -------------------------------------------------------------- PUBLIC -------------------------------------------------------------- */
 
 void serial_init(void) {
   rx_head = 0;
@@ -98,8 +84,6 @@ void serial_init(void) {
 
   HAL_NVIC_SetPriority(UART5_IRQn, UART_IRQ_PRIORITY, 0U);
   HAL_NVIC_EnableIRQ(UART5_IRQn);
-  // __HAL_UART_SEND_REQ(&huart5, UART_RXDATA_FLUSH_REQUEST);
-  // __HAL_UART_CLEAR_OREFLAG(&huart5);
 
   rx_status = HAL_UART_Receive_IT(&huart5, &uart_rx_byte, 1);
 }
@@ -113,40 +97,40 @@ void serial_service(void) {
   while (rx_buffer_pop(&byte)) {
     switch (serial_state) {
       case SERIAL_STATE_DECODE_OP:
-        current_frame = (transport_frame_t){0}; // Reset current frame
-        data_index = 0; // Reset data index for new frame
+        current_frame = (transport_frame_t){0};
+        data_index = 0;
 
-        current_frame.op = byte; // Store the received operation code
+        current_frame.op = byte;
         serial_state = SERIAL_STATE_DECODE_SIZE;
         break;
       case SERIAL_STATE_DECODE_SIZE:
         if (byte > TRANSPORT_MAX_PAYLOAD) {
-          serial_state = SERIAL_STATE_ERROR; // Cannot resync, so latch.
+          serial_state = SERIAL_STATE_ERROR;
           break;
         }
-        current_frame.len = byte; // Store the received size
+        current_frame.len = byte;
         if (current_frame.len == 0) {
-          serial_state = SERIAL_STATE_DECODE_CRC; // No data, move to CRC state
+          serial_state = SERIAL_STATE_DECODE_CRC;
         } else {
-          serial_state = SERIAL_STATE_DECODE_DATA; // Move to data state
+          serial_state = SERIAL_STATE_DECODE_DATA;
         }
         break;
       case SERIAL_STATE_DECODE_DATA:
-        current_frame.data[data_index] = byte; // Store the received data byte
+        current_frame.data[data_index] = byte;
         data_index++;
         if (data_index >= current_frame.len) {
-          serial_state = SERIAL_STATE_DECODE_CRC; // Move to CRC state after receiving all data bytes
+          serial_state = SERIAL_STATE_DECODE_CRC;
         }
         break;
       case SERIAL_STATE_DECODE_CRC:
-        // Here you would normally check the CRC, but for now we just accept the frame
+        // CRC validation is not implemented.
         if (!frame_queue_push(&current_frame)) {
           frames_dropped++;
         }
-        serial_state = SERIAL_STATE_DECODE_OP; // Reset to decode operation state for next frame
+        serial_state = SERIAL_STATE_DECODE_OP;
         break;
       case SERIAL_STATE_ERROR:
-        return; // Latched. Nothing clears this.
+        return;
     }
   }
 }
@@ -161,14 +145,8 @@ void serial_rx_complete(void) {
 }
 
 void serial_rx_error(void) {
-
   rx_status = HAL_UART_Receive_IT(&huart5, &uart_rx_byte, 1);
 }
-
-/* -------------------------------------------------------------- TRANSMIT -------------------------------------------------------------- */
-/* Added 2026-08-24 for stream.c. Outgoing packets are [id][size][data] - no
-   CRC, unlike the incoming format. Non-blocking: one packet is in flight at a
-   time and serial_send() refuses rather than queueing. */
 
 #define TX_BUFFER_SIZE (2U + TRANSPORT_MAX_PAYLOAD)
 
@@ -181,9 +159,7 @@ bool serial_send(uint8_t id, const uint8_t *data, uint8_t len) {
     return false;
   }
 
-  /* Checked before packing, not after. The ISR is still reading tx_buffer
-     while a transfer is live, so writing into it early corrupts the packet
-     already going out. */
+  // The transmit ISR still owns tx_buffer until UART is ready.
   if (huart5.gState != HAL_UART_STATE_READY) {
     tx_dropped++;
     return false;
